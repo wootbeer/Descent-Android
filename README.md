@@ -18,6 +18,19 @@ SHA1 hash of DESCENT.HOG:
 On first launch the game will ask you to select the folder with these files. 
 If it closes you are not using the correct version of the files.
 
+Controls
+-------
+Auto show/hide on-screen touch controls.
+Optimized for handhelds.
+
+Android Handhelds / Retroid Devices:
+Make sure controller style is set to Retro or whatever your devices default is. 
+Ntndo style as opposed to Xbox style, swipe down menu to access these options.
+
+Switch to Modern stick layout from remap menu if desired for fps style contSrols.
+
+Gyro works.
+
 License
 -------
 Please see "COPYING."
@@ -25,9 +38,6 @@ Please see "COPYING."
 Issues and Limitations
 ----------------------
 Known:
-Android Handhelds / Retroid Devices:
-Make sure controller style is set to Retro or whatever your devices default is. 
-Ntndo style as opposed to Xbox style, swipe down menu to access these options.
 
 Else: 
 Please see the “Issues” section in GitHub.
