@@ -1,0 +1,19 @@
+# Auto-detect text files and normalize them to LF line endings in the repository; Git
+# still converts to whatever line ending fits the platform on checkout unless a rule
+# below overrides that for a specific file.
+* text=auto
+
+# The Gradle wrapper's Unix shell script needs LF endings to run at all -- if this ever
+# gets committed with CRLF endings (easy to do by accident from Windows), `./gradlew`
+# breaks for every Linux/Mac contributor. Pin both wrapper scripts explicitly so this
+# can't happen regardless of the committer's platform or Git config.
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# Common binary types -- don't let Git try to diff or line-ending-normalize these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.jks binary
+*.keystore binary

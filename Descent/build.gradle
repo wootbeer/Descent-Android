@@ -1,0 +1,84 @@
+apply plugin: 'com.android.application'
+
+// Release signing: the keystore's location and passwords live in a local
+// keystore.properties file (see keystore.properties.example for the format), which is
+// git-ignored and never committed. Android's own installer refuses to install an
+// "update" APK over an existing install unless it's signed with the same certificate as
+// what's already on the device -- that's true for a sideloaded/GitHub-distributed APK
+// just as much as a Play Store one -- so this is what lets users actually receive
+// updates instead of having to uninstall/reinstall (and lose their save games) every
+// release. When keystore.properties isn't present -- e.g. a fresh clone that hasn't set
+// up a release keystore yet -- release builds fall back to the debug keystore, so
+// `assembleRelease` still works, it just won't produce something you can distribute as
+// a continuable update.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+def hasReleaseSigning = keystorePropertiesFile.exists()
+if (hasReleaseSigning) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    compileSdkVersion 31
+    buildToolsVersion "31.0.0"
+    defaultConfig {
+        minSdkVersion 14
+        targetSdkVersion 31
+        // Bump versionCode by at least 1 on every release, and update versionName to match --
+        // Android's package installer refuses to install an "update" APK over an existing
+        // install unless versionCode is strictly higher than what's already on the device, so
+        // this has to change every time regardless of what any distribution tool (e.g.
+        // Obtainium, tracking GitHub release tags) reports as available.
+        versionCode 1
+        versionName "1.0"
+        externalNativeBuild {
+            cmake {
+                cFlags "-DANDROID_NDK", "-DDISABLE_IMPORTGL", "-DOGLES", "-DNASM", "-DNETWORK"
+            }
+        }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseSigning ? signingConfigs.release : debug.signingConfig
+            externalNativeBuild {
+                cmake {
+                    cFlags.addAll("-DNDEBUG", "-DRELEASE")
+                }
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.10.2"
+        }
+    }
+    splits {
+        abi {
+            enable true
+            universalApk false
+        }
+    }
+
+    // Renames the built APK(s) from the AGP default (e.g. "Descent-armeabi-v7a-release.apk")
+    // to something more descriptive. With the ABI splits above, one APK gets built per ABI, so
+    // this runs once per output. To change the pattern, just edit the outputFileName line below
+    // -- e.g. drop "-${variant.buildType.name}" for a shorter name, or swap in your own prefix.
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            def abi = output.getFilter(com.android.build.OutputFile.ABI) ?: "universal"
+            outputFileName = "Descent-Android-${variant.versionName}-${abi}-${variant.buildType.name}.apk"
+        }
+    }
+}
