@@ -29,8 +29,10 @@ void ogles_bm_bind_teximage_2d(grs_bitmap *bm) {
 	GLubyte *image_data;
 	ubyte *data, *sbits, *dbits;
 	int i;
-	
-	if (!glIsTexture(bm->bm_ogles_tex_id)) {
+
+	GLboolean already_uploaded = glIsTexture(bm->bm_ogles_tex_id);
+
+	if (!already_uploaded) {
 		glGenTextures(1, &bm->bm_ogles_tex_id);
 		glBindTexture(GL_TEXTURE_2D, bm->bm_ogles_tex_id);
 		image_data = malloc(bm->bm_w * bm->bm_h * 4);

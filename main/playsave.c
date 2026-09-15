@@ -254,8 +254,26 @@ static char rcsid[] = "$Id: playsave.c 2.3 1995/05/26 16:16:23 john Exp $";
 // as a trailing field, the same way Config_use_gyroscope/Config_joystick_sensitivity
 // are, so old .plr files (missing this field) fail the fread gracefully and just keep
 // whatever gamepad_remap_reset_to_defaults() already seeded.
+//
+// GAMEPAD_REMAP_NUM_ACTIONS covers only the original 7 actions (Fire Primary through
+// Toggle Cockpit) -- deliberately NOT bumped to match gamepad_remap.c's GP_NUM_ACTIONS
+// (14, after "Slide On" through "Cruise Off" were added) even though Gamepad_bound_
+// keycodes[] itself is now 14 long. Resizing this field in place would silently corrupt
+// every existing save: an old .plr's on-disk bytes for this field are exactly 7 shorts
+// long, so a 14-short fread here would run past them into the stick-layout/invert-y/
+// touch-scale bytes that follow, both misreading this field AND desyncing every read
+// after it. The 7 new actions get their own independent trailing field instead (see
+// GAMEPAD_REMAP_NUM_NEW_ACTIONS below), appended after the existing chain -- the same
+// append-only discipline every other field here already follows.
 #define GAMEPAD_REMAP_NUM_ACTIONS 7
-extern int Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS];
+// The "Slide On" through "Cruise Off" actions added later -- Gamepad_bound_keycodes[7..13].
+// GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS must equal gamepad_remap.c's
+// GP_NUM_ACTIONS (14) -- no shared header ties these together, so keep them in sync by hand.
+#define GAMEPAD_REMAP_NUM_NEW_ACTIONS 7
+// No fixed bound here -- the real array (gamepad_remap.c) is GAMEPAD_REMAP_NUM_ACTIONS +
+// GAMEPAD_REMAP_NUM_NEW_ACTIONS long; every access below already uses an explicit index
+// range, so leaving this unsized avoids yet another count that could drift out of sync.
+extern int Gamepad_bound_keycodes[];
 extern void gamepad_remap_reset_to_defaults(void);
 
 // Which physical stick drives which analog function -- 0 (standard) or 1 (swapped),
@@ -266,6 +284,11 @@ extern int Gamepad_stick_layout;
 // Options menu "Invert Y" checkbox -- main/menu.c. Persisted the same way, one more
 // trailing byte.
 extern int Config_invert_y;
+
+// Options menu "Touch Scaling" slider -- Descent/src/main/cpp/controls.c. Persisted the
+// same way, one more trailing byte.
+extern ubyte Config_touch_control_scale;
+extern void touch_control_scale_changed(void);
 
 //this is for version 5 and below
 #pragma pack(1)
@@ -374,6 +397,7 @@ RetrySelection:
 	Config_joystick_sensitivity = 8;
 	Config_invert_y = 1;
 	Config_use_gyroscope = 0;
+	Config_touch_control_scale = 2;	// index 2 = 1.00x -- see controls.c's TOUCH_SCALE_DEFAULT_INDEX
 	gamepad_remap_reset_to_defaults();
 
 	// Default taunt macros
@@ -490,6 +514,7 @@ int read_player_file()
 		short gamepad_keycodes[GAMEPAD_REMAP_NUM_ACTIONS];
 		ubyte stick_layout;
 		ubyte invert_y;
+		ubyte touch_scale;
 		int gi;
 
 		// Seed the live gamepad-remap table to its compiled-in defaults before the
@@ -510,6 +535,12 @@ int read_player_file()
 		// a previously-loaded pilot in this same session left it as -- this field
 		// was previously left unseeded here, unlike the others.
 		Config_use_gyroscope = 0;
+
+		// Same reasoning again, for Touch Scaling: seed the compiled-in default (index 2,
+		// 1.00x -- see controls.c's TOUCH_SCALE_DEFAULT_INDEX) before the trailing read
+		// below, so a pilot with no saved value doesn't silently inherit whatever a
+		// previously-loaded pilot left it as.
+		Config_touch_control_scale = 2;
 
 		if (fread( kconfig_settings, MAX_CONTROLS*CONTROL_MAX_TYPES, 1, file )!=1)
 			errno_ret=errno;
@@ -542,6 +573,27 @@ int read_player_file()
 			// Config_invert_y at the default seeded above.
 			if (fread(&invert_y, sizeof(ubyte), 1, file) == 1)
 				Config_invert_y = invert_y;
+
+			// Same independent, failure-tolerant pattern for Touch Scaling -- a save from
+			// before this field existed simply fails this fread and leaves
+			// Config_touch_control_scale at the default seeded above.
+			if (fread(&touch_scale, sizeof(ubyte), 1, file) == 1)
+				Config_touch_control_scale = touch_scale;
+
+			// "Slide On" through "Cruise Off" -- appended here, after every existing
+			// trailing field, rather than folded into the original GAMEPAD_REMAP_NUM_ACTIONS
+			// block above (see the comment on GAMEPAD_REMAP_NUM_NEW_ACTIONS near the top of
+			// this file for why). A save from before these actions existed simply fails
+			// this fread and leaves Gamepad_bound_keycodes[7..13] at the defaults
+			// gamepad_remap_reset_to_defaults() already seeded above (GP_UNBOUND for all 7,
+			// since none of them have a default physical button).
+			{
+				short new_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEW_ACTIONS];
+				if (fread(new_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEW_ACTIONS, file) == GAMEPAD_REMAP_NUM_NEW_ACTIONS) {
+					for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEW_ACTIONS; gi++)
+						Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + gi] = new_gamepad_keycodes[gi];
+				}
+			}
 		}
 
 		// Here we are refusing to set the controls as they are hard-coded for iOS
@@ -549,6 +601,12 @@ int read_player_file()
 		if (errno_ret==EZERO)	{
 			// kc_set_controls();
 		}
+
+		// Apply whatever Config_touch_control_scale ended up as (freshly loaded, or the
+		// seeded default on an old/missing save) to the live button layout right away --
+		// this pilot's on-screen controls should reflect their saved preference immediately,
+		// not just after a trip through the Options menu.
+		touch_control_scale_changed();
 	}
 
 	if (fclose(file) && errno_ret==EZERO)
@@ -704,12 +762,16 @@ int write_player_file()
 	//write kconfig info
 	{
 		short gamepad_keycodes[GAMEPAD_REMAP_NUM_ACTIONS];
+		short new_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEW_ACTIONS];
 		ubyte stick_layout = (ubyte) Gamepad_stick_layout;
 		ubyte invert_y = (ubyte) Config_invert_y;
+		ubyte touch_scale = Config_touch_control_scale;
 		int gi;
 
 		for (gi = 0; gi < GAMEPAD_REMAP_NUM_ACTIONS; gi++)
 			gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[gi];
+		for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEW_ACTIONS; gi++)
+			new_gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + gi];
 
 		if (fwrite( kconfig_settings, MAX_CONTROLS*CONTROL_MAX_TYPES, 1, file )!=1)
 			errno_ret=errno;
@@ -722,6 +784,13 @@ int write_player_file()
 		else if (fwrite( &stick_layout, sizeof(ubyte), 1, file ) != 1)
 			errno_ret=errno;
 		else if (fwrite( &invert_y, sizeof(ubyte), 1, file ) != 1)
+			errno_ret=errno;
+		else if (fwrite( &touch_scale, sizeof(ubyte), 1, file ) != 1)
+			errno_ret=errno;
+		// "Slide On" through "Cruise Off" -- appended after every existing trailing
+		// field, same append-only reasoning as the read side (see the comment on
+		// GAMEPAD_REMAP_NUM_NEW_ACTIONS near the top of this file).
+		else if (fwrite( new_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEW_ACTIONS, file ) != GAMEPAD_REMAP_NUM_NEW_ACTIONS)
 			errno_ret=errno;
 	}
 

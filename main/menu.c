@@ -766,10 +766,11 @@ void do_detail_level_menu_custom(void)
 		m[5 + title_extra].text = "Show FPS Counter";
 		m[5 + title_extra].value = framerate_on;
 
-		m[6 + title_extra].type = NM_TYPE_TEXT;
-		m[6 + title_extra].text = TXT_LO_HI;
+		// Used to be followed by a stray "lo   hi" NM_TYPE_TEXT row (TXT_LO_HI) -- a leftover
+		// slider-endpoint legend from the original DOS UI that never made sense as a standalone
+		// row in this custom submenu. See the "stray text at the bottom of Video Options" report.
 
-		s = newmenu_do1(NULL, "Video Options", 7 + title_extra, m, do_detail_level_menu_custom_menuset, s);
+		s = newmenu_do1(NULL, "Video Options", 6 + title_extra, m, do_detail_level_menu_custom_menuset, s);
 	} while (s > -1);
 
 	set_custom_detail_vars();
@@ -912,7 +913,7 @@ static int Options_menu_have_gyroscope = 0;
 
 void joydef_menuset(int nitems, newmenu_item * items, int *last_key, int citem )
 {
-	int brightness_item = 10 + Options_menu_have_gyroscope;
+	int brightness_item = 11 + Options_menu_have_gyroscope;
 
 	nitems=nitems;
 	*last_key = *last_key;
@@ -942,6 +943,98 @@ void joydef_menuset(int nitems, newmenu_item * items, int *last_key, int citem )
 
 extern void do_remap_gamepad_menu(void);
 
+// Options menu "Touch Scaling" slider -- Descent/src/main/cpp/controls.c. Persisted the
+// same way, one more trailing byte (main/playsave.c).
+extern ubyte Config_touch_control_scale;
+extern void touch_control_scale_changed(void);
+
+// Pause-menu Cheats submenu (do_cheats_menu() below), called directly from
+// main/game.c's do_game_menu(), one level up from Options. Every effect here is the
+// exact same code the classic typed cheat codes (GABBAGABBAHEY, then
+// RACERX/GUILE/TWILIGHT/MITZI/SCOURGE/etc.) already trigger, factored out into these
+// standalone functions in main/game.c so this menu is just a second front end onto the
+// same, single implementation of what each cheat actually does -- see the "add a Cheats
+// submenu, leverage the existing cheat codes" request.
+extern void cheat_toggle_invulnerability(void);
+extern void cheat_toggle_cloak(void);
+extern void cheat_fill_shields(void);
+extern void cheat_grant_all_keys(void);
+extern void cheat_full_arsenal(void);
+extern void cheat_extra_life(void);
+extern void cheat_toggle_ghost_mode(void);
+extern void cheat_toggle_turbo_mode(void);
+extern void cheat_toggle_robot_firing(void);
+extern void cheat_warp_to_level(int new_level_num);
+extern int Physics_cheat_flag;
+extern int Game_turbo_mode;
+extern int Robot_firing_enabled;
+
+void do_cheats_menu(void)
+{
+	newmenu_item m[11];
+	// Captured fresh at the top of every redraw so a flag that changes for some other
+	// reason while this menu is open (invulnerability running out on its own timer, say)
+	// still shows correctly -- and compared against what the player leaves each checkbox
+	// as once newmenu_do1() returns, so a toggle below only fires for a checkbox the
+	// player actually touched, not every row on every redraw.
+	int was_invuln, was_cloaked, was_ghost, was_turbo, was_robots_fire;
+	int i = 0;
+
+	do {
+		was_invuln = (Players[Player_num].flags & PLAYER_FLAGS_INVULNERABLE) != 0;
+		was_cloaked = (Players[Player_num].flags & PLAYER_FLAGS_CLOAKED) != 0;
+		was_ghost = (Physics_cheat_flag == 0xBADA55);
+		was_turbo = (Game_turbo_mode != 0);
+		was_robots_fire = (Robot_firing_enabled != 0);
+
+		m[0].type = NM_TYPE_CHECK; m[0].text = "Invulnerability"; m[0].value = was_invuln;
+		m[1].type = NM_TYPE_CHECK; m[1].text = "Cloak"; m[1].value = was_cloaked;
+		m[2].type = NM_TYPE_CHECK; m[2].text = "Ghost Mode (no clip)"; m[2].value = was_ghost;
+		m[3].type = NM_TYPE_CHECK; m[3].text = "Turbo Mode"; m[3].value = was_turbo;
+		m[4].type = NM_TYPE_CHECK; m[4].text = "Robots Can Fire"; m[4].value = was_robots_fire;
+		m[5].type = NM_TYPE_TEXT; m[5].text = "";
+		m[6].type = NM_TYPE_MENU; m[6].text = "Full Shields";
+		m[7].type = NM_TYPE_MENU; m[7].text = "All Keys";
+		m[8].type = NM_TYPE_MENU; m[8].text = "Full Arsenal";
+		m[9].type = NM_TYPE_MENU; m[9].text = "Extra Life";
+		m[10].type = NM_TYPE_MENU; m[10].text = "Warp to Level...";
+
+		i = newmenu_do1(NULL, "Cheats", 11, m, NULL, i);
+
+		if (m[0].value != was_invuln) cheat_toggle_invulnerability();
+		if (m[1].value != was_cloaked) cheat_toggle_cloak();
+		if (m[2].value != was_ghost) cheat_toggle_ghost_mode();
+		if (m[3].value != was_turbo) cheat_toggle_turbo_mode();
+		if (m[4].value != was_robots_fire) cheat_toggle_robot_firing();
+
+		if (i == 6) cheat_fill_shields();
+		if (i == 7) cheat_grant_all_keys();
+		if (i == 8) cheat_full_arsenal();
+		if (i == 9) cheat_extra_life();
+		if (i == 10) {
+			// Same "type a level number" prompt the typed "farmerjoe" cheat uses (see
+			// game.c) -- this menu just owns the prompt, cheat_warp_to_level() owns the
+			// validate-and-go-there logic, same as every other cheat here.
+			newmenu_item wm;
+			char text[10] = "";
+			int item;
+			wm.type = NM_TYPE_INPUT; wm.text_len = 10; wm.text = text;
+			item = newmenu_do(NULL, TXT_WARP_TO_LEVEL, 1, &wm, NULL);
+			if (item != -1) {
+				cheat_warp_to_level(atoi(text));
+				// StartNewLevel() (inside cheat_warp_to_level()) tears down and rebuilds
+				// the whole level/render/briefing state. The typed "farmerjoe" cheat only
+				// ever calls it from the top-level game input loop, never while a menu is
+				// still up on top of it. Looping back here to redraw the Cheats menu over
+				// that in-flight rebuild is exactly what was causing the missing briefing
+				// background, scrambled colors, and the app minimizing after warping --
+				// so bail out of this menu immediately instead of looping again.
+				return;
+			}
+		}
+	} while (i > -1);
+}
+
 void do_options_menu()
 {
 	newmenu_item m[14];
@@ -956,41 +1049,46 @@ void do_options_menu()
 		m[3].type = NM_TYPE_TEXT; m[3].text="";
 		m[4].type = NM_TYPE_MENU; m[4].text="Remap Gamepad";
 		m[5].type = NM_TYPE_SLIDER; m[5].text="Look Sensitivity"; m[5].value=Config_joystick_sensitivity; m[5].min_value =0; m[5].max_value = 8;
-		m[6].type = NM_TYPE_CHECK; m[6].text="Invert Y"; m[6].value=Config_invert_y;
-		m[7].type = NM_TYPE_TEXT; m[7].text="";
-		m[8].type = NM_TYPE_CHECK; m[8].text="Ship auto-leveling"; m[8].value=Auto_leveling_on;
+		m[6].type = NM_TYPE_SLIDER; m[6].text="Touch Scaling"; m[6].value=Config_touch_control_scale; m[6].min_value=0; m[6].max_value=8;
+		m[7].type = NM_TYPE_CHECK; m[7].text="Invert Y"; m[7].value=Config_invert_y;
+		m[8].type = NM_TYPE_TEXT; m[8].text="";
+		m[9].type = NM_TYPE_CHECK; m[9].text="Ship auto-leveling"; m[9].value=Auto_leveling_on;
 		if (have_gyroscope) {
-			m[9].type = NM_TYPE_CHECK;
-			m[9].text = "Use Gyroscope";
-			m[9].value = Config_use_gyroscope;
+			m[10].type = NM_TYPE_CHECK;
+			m[10].text = "Use Gyroscope";
+			m[10].value = Config_use_gyroscope;
 		}
-		m[9 + have_gyroscope].type = NM_TYPE_TEXT; m[9 + have_gyroscope].text="";
-		m[10 + have_gyroscope].type = NM_TYPE_SLIDER; m[10 + have_gyroscope].text=TXT_BRIGHTNESS; m[10 + have_gyroscope].value=gr_palette_get_gamma();m[10 + have_gyroscope].min_value=0; m[10 + have_gyroscope].max_value=8;
-		m[11 + have_gyroscope].type = NM_TYPE_MENU; m[11 + have_gyroscope].text="Video Options";
+		m[10 + have_gyroscope].type = NM_TYPE_TEXT; m[10 + have_gyroscope].text="";
+		m[11 + have_gyroscope].type = NM_TYPE_SLIDER; m[11 + have_gyroscope].text=TXT_BRIGHTNESS; m[11 + have_gyroscope].value=gr_palette_get_gamma();m[11 + have_gyroscope].min_value=0; m[11 + have_gyroscope].max_value=8;
+		m[12 + have_gyroscope].type = NM_TYPE_MENU; m[12 + have_gyroscope].text="Video Options";
 
-		i = newmenu_do1( NULL, TXT_OPTIONS, 12 + have_gyroscope, m, joydef_menuset, i );
+		i = newmenu_do1( NULL, TXT_OPTIONS, 13 + have_gyroscope, m, joydef_menuset, i );
 
 		if (i == 4) {
 			do_remap_gamepad_menu();
 		}
 
-		if (i == 11 + have_gyroscope) {
+		if (i == 12 + have_gyroscope) {
 			do_detail_level_menu_custom();
 		}
 
 		Config_channels_reversed = m[2].value;
 		Config_joystick_sensitivity = m[5].value;
-		Config_invert_y = m[6].value;
-		Auto_leveling_on = m[8].value;
+		if (Config_touch_control_scale != m[6].value) {
+			Config_touch_control_scale = (ubyte) m[6].value;
+			touch_control_scale_changed();
+		}
+		Config_invert_y = m[7].value;
+		Auto_leveling_on = m[9].value;
 		if (have_gyroscope) {
-			if (Config_use_gyroscope != m[9].value) {
-				if (m[9].value) {
+			if (Config_use_gyroscope != m[10].value) {
+				if (m[10].value) {
 					startMotion();
 				} else {
 					stopMotion();
 				}
 			}
-			Config_use_gyroscope = m[9].value;
+			Config_use_gyroscope = m[10].value;
 		}
 	} while( i>-1 );
 

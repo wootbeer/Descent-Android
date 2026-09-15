@@ -78,6 +78,15 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	private boolean hatLeftDown, hatRightDown, hatUpDown, hatDownDown;
 	private boolean menuNavLeftDown, menuNavRightDown, menuNavUpDown, menuNavDownDown;
 	private boolean menuNavRsLeftDown, menuNavRsRightDown, menuNavRsUpDown, menuNavRsDownDown;
+	// Digital press/release synthesized from the LT/RT analog trigger axes crossing
+	// TRIGGER_DEADZONE, so the Remap Gamepad screen's capture step (which only ever sees
+	// discrete button events via gamepadButtonRaw()) can also see a trigger "press" --
+	// see GP_TRIGGER_LT/RT in gamepad_remap.c for why this needs synthesizing at all.
+	private boolean triggerLtRemapDown, triggerRtRemapDown;
+
+	// Mirrors GP_TRIGGER_LT/GP_TRIGGER_RT in gamepad_remap.c -- keep these two in sync.
+	private static final int GP_TRIGGER_LT = 1001;
+	private static final int GP_TRIGGER_RT = 1002;
 
 	public DescentView(Context context, float renderScale, boolean quickResume) {
 		super(context);
@@ -196,6 +205,14 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			}
 			float hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X);
 			float hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y);
+
+			// Let the Remap Gamepad screen (and any action a player binds to LT/RT there)
+			// see the triggers as a button, same as every other input this method already
+			// promotes to a discrete press/release -- independent of, and in addition to,
+			// whatever Standard/Modern layout already does with lt/rt below (mirrors how
+			// the 7 real buttons have never had any other fixed function to conflict with).
+			triggerLtRemapDown = updateDigitalAxisRaw(triggerLtRemapDown, lt > TRIGGER_DEADZONE, GP_TRIGGER_LT);
+			triggerRtRemapDown = updateDigitalAxisRaw(triggerRtRemapDown, rt > TRIGGER_DEADZONE, GP_TRIGGER_RT);
 
 			// D-pad, as a hat-switch axis pair: some gamepads (this device included) send
 			// D-pad presses this way instead of KEYCODE_DPAD_* key events, which is why
@@ -320,6 +337,18 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	private boolean updateDigitalAxis(boolean wasDown, boolean isDown, char key) {
 		if (isDown != wasDown) {
 			keyHandler(key, isDown);
+		}
+		return isDown;
+	}
+
+	// Same edge-detection idiom as updateDigitalAxis() above, but forwarding through
+	// gamepadButtonRaw() (an Android keyCode) instead of keyHandler() (a Descent
+	// scancode) -- used for the two synthetic trigger "buttons" below, so the Remap
+	// Gamepad screen's capture step can see a trigger pull the same way it already sees
+	// a real button press.
+	private boolean updateDigitalAxisRaw(boolean wasDown, boolean isDown, int keyCode) {
+		if (isDown != wasDown) {
+			gamepadButtonRaw(keyCode, isDown);
 		}
 		return isDown;
 	}

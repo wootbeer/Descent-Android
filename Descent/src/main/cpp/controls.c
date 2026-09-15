@@ -82,53 +82,128 @@ jfloat dp_to_px(jfloat dp) {
 	return pt_conv("dpToPx", dp);
 }
 
-void init_buttons(jint w, jint h) {
+// Touch control size preference -- Options menu "Touch Scaling" slider (main/menu.c). 0-8,
+// same convention as every other Options menu slider (Config_joystick_sensitivity etc.),
+// mapped through Touch_scale_values[] below rather than used directly, matching the
+// byte-array detail-level tables in main/menu.c. Persisted per-pilot in main/playsave.c,
+// the same trailing-field pattern as Config_joystick_sensitivity/Config_invert_y.
+//
+// Default (index 2, 1.00x) matches the size buttonSizeBias now produces on an ordinary
+// phone after the "on-screen touch controls scaled way too large" fix
+// (DescentActivity.java) -- i.e. leaving this slider untouched changes nothing from
+// today's (fixed) behavior. Deliberately biased toward the high end (6 steps up from
+// default, only 2 down): touch targets are already comfortable at the default, and most
+// players adjusting this at all will want them bigger, not smaller -- see the same bug
+// report.
+#define TOUCH_SCALE_DEFAULT_INDEX 2
+static const float Touch_scale_values[9] = {
+		0.90f, 0.95f, 1.00f, 1.10f, 1.20f, 1.35f, 1.50f, 1.65f, 1.80f
+};
+ubyte Config_touch_control_scale = TOUCH_SCALE_DEFAULT_INDEX;
+
+// Cached logical (dp, pre-scale) render-buffer size, and the actual render-buffer pixel
+// size, from the most recent init_buttons() call. layout_buttons() below re-reads these
+// every time it runs so the touch-scaling slider (and a freshly-loaded pilot's saved
+// preference) can redo the whole button layout on demand without needing a fresh w/h
+// from Java. The px versions are only used to clamp the result on-screen -- see the
+// bottom of layout_buttons() below.
+static jint g_buttons_w_dp, g_buttons_h_dp;
+static jint g_buttons_w_px, g_buttons_h_px;
+
+// Rebuilds buttons[] from the cached logical size and the current Touch_scale_values[]
+// selection. Split out of init_buttons() below so it can also be re-run any time
+// Config_touch_control_scale changes -- from the Options menu (do_options_menu(),
+// main/menu.c) or right after a pilot's saved value loads (read_player_file(),
+// main/playsave.c) -- without needing another w/h from Java.
+static void layout_buttons(void) {
 	int i;
 	float menuSpacing;
+	float scale = Touch_scale_values[Config_touch_control_scale];
+	jint w = g_buttons_w_dp;
+	jint h = g_buttons_h_dp;
 
-	w = (jint) px_to_dp(w);
-	h = (jint) px_to_dp(h);
+	// Applies the touch-scaling slider to one dp literal below -- both a button's own
+	// size (55, 70, ...) and the small offset that positions it near its corner (185,
+	// 95, ...). Deliberately NOT applied to w/h themselves (the full logical screen
+	// size): every position below is written as "distance from an edge" (a small
+	// literal, or w/h minus one), and w/h stay exactly what the screen actually
+	// measures however big Touch_scale_values[] gets -- so growing a button only ever
+	// grows it and pushes it a little further from its corner, it never drags the
+	// whole cluster toward the middle of the screen or past the far edge the way
+	// naively scaling the final combined position (e.g. "w - 95") did. See the
+	// "touch scaling just makes the controls go off screen" report.
+#define SC(v) ((int) ((v) * scale))
+
 	menuSpacing = (w - 150) / 3;
 
 	// Define buttons
-	buttons[ACCELERATE_BTN] = (struct GameButton) {120, h - 185, 55, 55, {KEY_A}, 1, true};
-	buttons[REVERSE_BTN] = (struct GameButton) {120, h - 75, 55, 55, {KEY_Z}, 1, true};
-	buttons[SLIDE_LEFT_BTN] = (struct GameButton) {65, h - 130, 55, 55, {KEY_PAD1}, 1, true};
-	buttons[SLIDE_RIGHT_BTN] = (struct GameButton) {175, h - 130, 55, 55, {KEY_PAD3}, 1, true};
-	buttons[SLIDE_UP_BTN] = (struct GameButton) {25, h - 185, 35, 80, {KEY_PADMINUS}, 1, true};
-	buttons[SLIDE_DOWN_BTN] = (struct GameButton) {25, h - 100, 35, 80, {KEY_PADPLUS}, 1, true};
-	buttons[BANK_LEFT_BTN] = (struct GameButton) {65, h - 225, 80, 35, {KEY_Q}, 1, true};
-	buttons[BANK_RIGHT_BTN] = (struct GameButton) {150, h - 225, 80, 35, {KEY_E}, 1, true};
-	buttons[ACCELERATE_SLIDE_LEFT_BTN] = (struct GameButton) {65, h - 185, 55, 55,
+	buttons[ACCELERATE_BTN] = (struct GameButton) {SC(120), h - SC(185), SC(55), SC(55), {KEY_A}, 1, true};
+	buttons[REVERSE_BTN] = (struct GameButton) {SC(120), h - SC(75), SC(55), SC(55), {KEY_Z}, 1, true};
+	buttons[SLIDE_LEFT_BTN] = (struct GameButton) {SC(65), h - SC(130), SC(55), SC(55), {KEY_PAD1}, 1, true};
+	buttons[SLIDE_RIGHT_BTN] = (struct GameButton) {SC(175), h - SC(130), SC(55), SC(55), {KEY_PAD3}, 1, true};
+	buttons[SLIDE_UP_BTN] = (struct GameButton) {SC(25), h - SC(185), SC(35), SC(80), {KEY_PADMINUS}, 1, true};
+	buttons[SLIDE_DOWN_BTN] = (struct GameButton) {SC(25), h - SC(100), SC(35), SC(80), {KEY_PADPLUS}, 1, true};
+	buttons[BANK_LEFT_BTN] = (struct GameButton) {SC(65), h - SC(225), SC(80), SC(35), {KEY_Q}, 1, true};
+	buttons[BANK_RIGHT_BTN] = (struct GameButton) {SC(150), h - SC(225), SC(80), SC(35), {KEY_E}, 1, true};
+	buttons[ACCELERATE_SLIDE_LEFT_BTN] = (struct GameButton) {SC(65), h - SC(185), SC(55), SC(55),
 															  {KEY_A, KEY_PAD1}, 2, true};
-	buttons[ACCELERATE_SLIDE_RIGHT_BTN] = (struct GameButton) {175, h - 185, 55, 55,
+	buttons[ACCELERATE_SLIDE_RIGHT_BTN] = (struct GameButton) {SC(175), h - SC(185), SC(55), SC(55),
 															   {KEY_A, KEY_PAD3}, 2, true};
-	buttons[REVERSE_SLIDE_LEFT_BTN] = (struct GameButton) {65, h - 75, 55, 55, {KEY_Z, KEY_PAD1}, 2,
-														   true};
-	buttons[REVERSE_SLIDE_RIGHT_BTN] = (struct GameButton) {175, h - 75, 55, 55, {KEY_Z, KEY_PAD3},
-															2, true};
-	buttons[FIRE_PRIMARY_BTN] = (struct GameButton) {w - 95, h - 170, 70, 70, {KEY_LCTRL}, 1,
-													 false};
-	buttons[FIRE_SECONDARY_BTN] = (struct GameButton) {w - 175, h - 90, 70, 70, {KEY_SPACEBAR}, 1,
-													   false};
-	buttons[FIRE_FLARE_BTN] = (struct GameButton) {w - 85, h - 80, 50, 50, {KEY_F}, 1, false};
-	buttons[TOGGLE_PRIMARY_BTN] = (struct GameButton) {w - 95, h - 225, 70, 40, {KEY_1}, 1, false};
-	buttons[TOGGLE_SECONDARY_BTN] = (struct GameButton) {w - 230, h - 90, 40, 70, {KEY_6}, 1,
-														 false};
-	buttons[MENU_BTN] = (struct GameButton) {25, 20, 25, 25, {KEY_ESC}, 1, false};
-	buttons[MAP_BTN] = (struct GameButton) {50 + (int) menuSpacing, 20, 25, 25, {KEY_TAB}, 1,
-											false};
-	buttons[TOGGLE_COCKPIT_BTN] = (struct GameButton) {75 + (int) (menuSpacing * 2), 20, 25, 25,
+	buttons[REVERSE_SLIDE_LEFT_BTN] = (struct GameButton) {SC(65), h - SC(75), SC(55), SC(55),
+														   {KEY_Z, KEY_PAD1}, 2, true};
+	buttons[REVERSE_SLIDE_RIGHT_BTN] = (struct GameButton) {SC(175), h - SC(75), SC(55), SC(55),
+															{KEY_Z, KEY_PAD3}, 2, true};
+	buttons[FIRE_PRIMARY_BTN] = (struct GameButton) {w - SC(95), h - SC(170), SC(70), SC(70),
+													 {KEY_LCTRL}, 1, false};
+	buttons[FIRE_SECONDARY_BTN] = (struct GameButton) {w - SC(175), h - SC(90), SC(70), SC(70),
+													   {KEY_SPACEBAR}, 1, false};
+	buttons[FIRE_FLARE_BTN] = (struct GameButton) {w - SC(85), h - SC(80), SC(50), SC(50), {KEY_F}, 1, false};
+	buttons[TOGGLE_PRIMARY_BTN] = (struct GameButton) {w - SC(95), h - SC(225), SC(70), SC(40), {KEY_1}, 1, false};
+	buttons[TOGGLE_SECONDARY_BTN] = (struct GameButton) {w - SC(230), h - SC(90), SC(40), SC(70),
+														 {KEY_6}, 1, false};
+	buttons[MENU_BTN] = (struct GameButton) {SC(25), SC(20), SC(25), SC(25), {KEY_ESC}, 1, false};
+	buttons[MAP_BTN] = (struct GameButton) {SC(50) + (int) menuSpacing, SC(20), SC(25), SC(25),
+											{KEY_TAB}, 1, false};
+	buttons[TOGGLE_COCKPIT_BTN] = (struct GameButton) {SC(75) + (int) (menuSpacing * 2), SC(20), SC(25), SC(25),
 													   {KEY_F3}, 1, false};
-	buttons[REAR_VIEW_BTN] = (struct GameButton) {100 + (int) (menuSpacing * 3), 20, 25, 25,
+	buttons[REAR_VIEW_BTN] = (struct GameButton) {SC(100) + (int) (menuSpacing * 3), SC(20), SC(25), SC(25),
 												  {KEY_R}, 1, false};
+
+#undef SC
 
 	for (i = 0; i < NUM_BUTTONS; ++i) {
 		buttons[i].x = (int) dp_to_px(buttons[i].x);
 		buttons[i].y = (int) dp_to_px(buttons[i].y);
 		buttons[i].w = (int) dp_to_px(buttons[i].w);
 		buttons[i].h = (int) dp_to_px(buttons[i].h);
+
+		// Belt-and-suspenders safety clamp: whatever Touch_scale_values[] and this
+		// device's density/screen size add up to, never let a button's box start off
+		// the top/left of the render buffer or extend past its bottom/right. The
+		// anchored-offset math above already keeps this from happening in ordinary
+		// cases, but an unusually small/narrow screen at the slider's largest setting
+		// could still run out of room -- clamping means the worst case is a button
+		// pinned flush against the edge, not one that's partly or fully unreachable.
+		if (buttons[i].x < 0) buttons[i].x = 0;
+		if (buttons[i].y < 0) buttons[i].y = 0;
+		if (buttons[i].x + buttons[i].w > g_buttons_w_px) buttons[i].x = g_buttons_w_px - buttons[i].w;
+		if (buttons[i].y + buttons[i].h > g_buttons_h_px) buttons[i].y = g_buttons_h_px - buttons[i].h;
 	}
+}
+
+void init_buttons(jint w, jint h) {
+	g_buttons_w_px = w;
+	g_buttons_h_px = h;
+	g_buttons_w_dp = (jint) px_to_dp(w);
+	g_buttons_h_dp = (jint) px_to_dp(h);
+	layout_buttons();
+}
+
+// Called from main/menu.c (do_options_menu()) and main/playsave.c (read_player_file())
+// whenever Config_touch_control_scale changes, so the on-screen controls immediately
+// reflect it -- no app restart needed, unlike Render Scale/Force 4:3.
+void touch_control_scale_changed(void) {
+	layout_buttons();
 }
 
 void draw_buttons() {

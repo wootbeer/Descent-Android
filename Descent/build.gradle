@@ -29,8 +29,8 @@ android {
         // install unless versionCode is strictly higher than what's already on the device, so
         // this has to change every time regardless of what any distribution tool (e.g.
         // Obtainium, tracking GitHub release tags) reports as available.
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "0.2"
         externalNativeBuild {
             cmake {
                 cFlags "-DANDROID_NDK", "-DDISABLE_IMPORTGL", "-DOGLES", "-DNASM", "-DNETWORK"

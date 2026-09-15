@@ -97,11 +97,33 @@ public class DescentActivity extends Activity implements SensorEventListener {
 					});
 		}
 
-		// Calculate button size bias; want slightly bigger buttons on bigger screens
+		// Calculate button size bias; want slightly bigger touch controls on genuinely bigger
+		// (tablet-class) screens, without inflating them on an ordinary phone.
+		//
+		// This used to be a single divide-by-5.5-then-clamp-to-1.4 formula, tuned against
+		// phones from around when this port was written (~2016, typically 4.5-5.5" diagonal).
+		// Phones have gotten bigger since -- a normal 6-7" phone today has a landscape
+		// width+height-in-inches sum well past that formula's old threshold, so it was hitting
+		// its max 1.4x bonus on nearly every current phone, not just tablets. Layered on top of
+		// today's much higher typical screen density, on-screen touch controls sized in dp (see
+		// dpToPx()/pxToDp() below, and their only other caller, controls.c's init_buttons())
+		// were coming out 3-3.5x their nominal dp size instead of the ~2-2.5x this was likely
+		// designed around -- ballooning into a checkerboard that swallowed most of the screen
+		// on modern phone hardware. See the "GUI for on-screen touch controls scaled way too
+		// large" bug report.
+		//
+		// Below PHONE_SIZE_IN (typical big-phone landscape sum), no bonus at all -- bias stays
+		// 1.0, so dpToPx()/pxToDp() are plain, unmodified density conversions and on-screen
+		// button dp sizes mean exactly what they say. From there it ramps linearly up to
+		// MAX_BIAS by TABLET_SIZE_IN (roughly an 8-10" tablet) and clamps at that beyond.
+		final float PHONE_SIZE_IN = 9.5f;
+		final float TABLET_SIZE_IN = 14.0f;
+		final float MAX_BIAS = 1.15f;
 		resources = getResources();
 		metrics = resources.getDisplayMetrics();
-		buttonSizeBias = (float) Math.min(Math.max((metrics.widthPixels / metrics.xdpi
-				+ metrics.heightPixels / metrics.ydpi) / 5.5f, 1), 1.4);
+		float sumInches = metrics.widthPixels / metrics.xdpi + metrics.heightPixels / metrics.ydpi;
+		float t = (sumInches - PHONE_SIZE_IN) / (TABLET_SIZE_IN - PHONE_SIZE_IN);
+		buttonSizeBias = (float) Math.min(Math.max(1.0f + t * (MAX_BIAS - 1.0f), 1.0f), MAX_BIAS);
 
 		// Set up gyroscope
 		sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);

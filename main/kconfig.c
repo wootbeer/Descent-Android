@@ -2171,8 +2171,24 @@ void kc_set_controls()
 {
 	int i;
 
-	for (i=0; i<NUM_KEY_CONTROLS; i++ )	
+	for (i=0; i<NUM_KEY_CONTROLS; i++ )
 		kc_keyboard[i].value = kconfig_settings[0][i];
+
+	// Android-port-only: Bank On (18), Cruise Faster (38), Cruise Slower (40) and
+	// Cruise Off (42) have no default *keyboard* binding at all in vanilla Descent --
+	// kconfig_settings[0][i] is 0xff/unbound for these, which is fine on PC (nothing
+	// else reads kc_keyboard[i].value if it's never < 255) but means the "Bank On"/
+	// "Cruise Faster"/"Cruise Slower"/"Cruise Off" rows added to the gamepad Remap
+	// screen (Descent/src/main/cpp/gamepad_remap.c) would silently do nothing no
+	// matter what physical button they're bound to -- key_handler(KEY_G/H/J/K, ...)
+	// only has any effect if kc_keyboard[].value already equals that scancode. Since
+	// this port's classic keyboard-config screen (kconfig_sub()) is unreachable (no
+	// physical keyboard), it's safe to just force-wire these 4 here, every time
+	// controls are (re)applied, exactly as if the player had bound them on a PC.
+	if (kc_keyboard[18].value == 255) kc_keyboard[18].value = KEY_G;   // Bank On
+	if (kc_keyboard[38].value == 255) kc_keyboard[38].value = KEY_H;   // Cruise Faster
+	if (kc_keyboard[40].value == 255) kc_keyboard[40].value = KEY_J;   // Cruise Slower
+	if (kc_keyboard[42].value == 255) kc_keyboard[42].value = KEY_K;   // Cruise Off
 
 	if ( (Config_control_type>0) && (Config_control_type<5))	{
 		for (i=0; i<NUM_OTHER_CONTROLS; i++ ) {

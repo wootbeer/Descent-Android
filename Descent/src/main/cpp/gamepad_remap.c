@@ -1,20 +1,30 @@
 //
-// Remap Gamepad -- lets the player rebind the 7 gameplay-action gamepad buttons
-// (Fire Primary/Secondary/Flare, Rear View, Bank Left/Right, Toggle Cockpit), plus a
-// "Stick Layout" option (Standard/Modern) that changes which physical inputs drive
-// turning, pitching, strafing and thrust (see Gamepad_stick_layout below).
+// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (14) gameplay actions to
+// gamepad buttons: the original 7 (Fire Primary/Secondary/Flare, Rear View, Bank
+// Left/Right, Toggle Cockpit) plus Slide On, Bank On, Drop Bomb, Automap, Cruise
+// Faster/Slower/Off -- plus a "Stick Layout" option (Standard/Modern) that changes
+// which physical inputs drive turning, pitching, strafing and thrust (see
+// Gamepad_stick_layout below). Stick Layout is pinned to the very top of the list
+// (row 0), above all the action rows -- see GP_ROW_STICK_LAYOUT/GP_ACTIONS_START
+// further down. The list no longer fits on one screen, so the screen itself
+// scrolls -- see the "Scrolling" section further down.
 //
 // D-pad, Start ("Menu") and Select ("Map") are intentionally never routed through
 // this system -- DescentView.handleGamepadKey() still dispatches them directly via
 // its original, fixed keyHandler() calls, so navigation and the ability to reach
-// this very screen always keep working regardless of what's been remapped.
+// this very screen always keep working regardless of what's been remapped. ("Map" and
+// "Automap" are the same game function, though -- see the comment on
+// Gamepad_remap_actions below -- so Select's fixed dispatch and the "Automap" row here
+// both ultimately press the same key.)
 //
 // Architecture note: today, by the time a gamepad button press reaches native code
 // it has already been collapsed to a fixed Descent scancode by a hardcoded Java
 // switch, so native code can't tell "physical button A" apart from "keyboard Ctrl."
 // gamepadButtonRaw() below is the fix -- Java forwards the *raw* Android keyCode for
-// the 7 remappable buttons instead of pre-translating it, so this file can own the
+// the remappable buttons instead of pre-translating it, so this file can own the
 // real keyCode<->action table (both for live dispatch and for the remap UI/save data).
+// The analog L2/R2 triggers get the same treatment via two synthetic keyCodes --
+// see GP_TRIGGER_LT/RT below.
 //
 
 #include <jni.h>
@@ -41,7 +51,18 @@
 #define GP_BUTTON_R1      103
 #define GP_BUTTON_THUMBL  106
 
-#define GP_NUM_ACTIONS 7
+// NOT real Android KeyEvent codes -- most gamepads (this device included) report the
+// analog L2/R2 triggers only as continuous MotionEvent axis values, never as a discrete
+// KeyEvent, so there's no real keyCode for this system to see in the first place.
+// DescentView.onGenericMotionEvent() synthesizes a digital press/release from each
+// trigger crossing TRIGGER_DEADZONE (the same edge-detection idiom already used there
+// for the hat-axis D-pad) and forwards it through this same gamepadButtonRaw() path
+// using these two sentinel values, chosen well outside the real KEYCODE_* range so they
+// can never collide with an actual button.
+#define GP_TRIGGER_LT 1001
+#define GP_TRIGGER_RT 1002
+
+#define GP_NUM_ACTIONS 14
 #define GP_UNBOUND (-1)
 
 typedef struct GamepadRemapAction {
@@ -50,6 +71,18 @@ typedef struct GamepadRemapAction {
 	int defaultKeyCode;       // Compiled-in default physical button (Android keyCode).
 } GamepadRemapAction;
 
+// The 7 new actions below (Slide On through Cruise Off) default to GP_UNBOUND -- no
+// compiled-in physical button -- per the "don't need these to have default mappings,
+// just the ability to map them" request. Bank On/Cruise Faster/Cruise Slower/Cruise Off
+// have no default *keyboard* binding at all in vanilla Descent (kc_keyboard[].value is
+// 0xff/unbound for those by default), so key_handler(KEY_G/H/J/K, ...) alone wouldn't do
+// anything -- kconfig.c's kc_set_controls() now force-wires exactly those 4 scancodes in
+// for this Android port (see the comment there) so these behave like every other action
+// here: press the bound gamepad button, the right thing happens. Slide On/Drop Bomb/
+// Automap reuse KEY_LALT/KEY_B/KEY_TAB, which already default to exactly these actions in
+// vanilla, so no such override was needed for them. "Map" and "Automap" are the same
+// game function (Select is hardwired to KEY_TAB, Descent's default Automap key -- see
+// DescentView.handleGamepadKey()'s KEYCODE_BUTTON_SELECT case) -- one row here covers both.
 static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 	{ "Fire Primary",   KEY_LCTRL,    GP_BUTTON_A },
 	{ "Fire Secondary", KEY_SPACEBAR, GP_BUTTON_B },
@@ -58,6 +91,13 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 	{ "Bank Left",      KEY_Q,        GP_BUTTON_L1 },
 	{ "Bank Right",     KEY_E,        GP_BUTTON_R1 },
 	{ "Toggle Cockpit", KEY_F3,       GP_BUTTON_THUMBL },
+	{ "Slide On",       KEY_LALT,     GP_UNBOUND },
+	{ "Bank On",        KEY_G,        GP_UNBOUND },
+	{ "Drop Bomb",      KEY_B,        GP_UNBOUND },
+	{ "Automap",        KEY_TAB,      GP_UNBOUND },
+	{ "Cruise Faster",  KEY_H,        GP_UNBOUND },
+	{ "Cruise Slower",  KEY_J,        GP_UNBOUND },
+	{ "Cruise Off",     KEY_K,        GP_UNBOUND },
 };
 
 // Live, persisted bindings -- consulted every time a gamepad button event arrives.
@@ -65,7 +105,8 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 // read_player_file() call) is already correct. playsave.c reads/writes this array
 // directly (see playsave.c's write_player_file()/read_player_file()).
 int Gamepad_bound_keycodes[GP_NUM_ACTIONS] = {
-	GP_BUTTON_A, GP_BUTTON_B, GP_BUTTON_X, GP_BUTTON_Y, GP_BUTTON_L1, GP_BUTTON_R1, GP_BUTTON_THUMBL
+	GP_BUTTON_A, GP_BUTTON_B, GP_BUTTON_X, GP_BUTTON_Y, GP_BUTTON_L1, GP_BUTTON_R1, GP_BUTTON_THUMBL,
+	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND
 };
 
 // Which physical inputs drive which analog functions:
@@ -164,6 +205,8 @@ static const char *gamepad_remap_bound_name(int keyCode) {
 		case GP_BUTTON_L1:     return "L1";
 		case GP_BUTTON_R1:     return "R1";
 		case GP_BUTTON_THUMBL: return "L3";
+		case GP_TRIGGER_LT:    return "LT";
+		case GP_TRIGGER_RT:    return "RT";
 		default:               return "---";
 	}
 }
@@ -191,8 +234,13 @@ static int gamepad_remap_poll_confirm(void) {
 // kc_change_key(), the classic DOS "press a key to rebind" screen this is modeled on
 // -- this is a standalone custom draw+input loop, not a newmenu_item screen.
 
-#define GP_NUM_ROWS (GP_NUM_ACTIONS + 4)    // 7 actions + Stick Layout + Reset/Cancel/Apply
-#define GP_ROW_STICK_LAYOUT (GP_NUM_ACTIONS)
+// Stick Layout is row 0 (pinned to the top, per the user's request); the
+// GP_NUM_ACTIONS action rows follow at GP_ACTIONS_START..GP_NUM_ACTIONS; Reset/
+// Cancel/Apply come last. GP_NUM_ROWS is unchanged (Stick Layout + actions +
+// Reset/Cancel/Apply == 1 + GP_NUM_ACTIONS + 3 == GP_NUM_ACTIONS + 4).
+#define GP_NUM_ROWS (GP_NUM_ACTIONS + 4)
+#define GP_ROW_STICK_LAYOUT 0
+#define GP_ACTIONS_START 1
 #define GP_ROW_RESET  (GP_NUM_ACTIONS + 1)
 #define GP_ROW_CANCEL (GP_NUM_ACTIONS + 2)
 #define GP_ROW_APPLY  (GP_NUM_ACTIONS + 3)
@@ -221,7 +269,7 @@ static const char *gamepad_remap_row_label(int row) {
 	if (row == GP_ROW_RESET) return "Reset to Defaults";
 	if (row == GP_ROW_CANCEL) return "Cancel";
 	if (row == GP_ROW_APPLY) return "Apply";
-	return Gamepad_remap_actions[row].label;
+	return Gamepad_remap_actions[row - GP_ACTIONS_START].label;
 }
 
 // staging_layout is only meaningful for GP_ROW_STICK_LAYOUT -- pass whatever's current
@@ -259,11 +307,11 @@ static void gamepad_remap_draw_row(int row, int staging[GP_NUM_ACTIONS], int sta
 
 	gr_scale_string(30 * f2fl(Scale_x), y, Scale_factor, Scale_factor, gamepad_remap_row_label(row));
 
-	if (row < GP_NUM_ACTIONS) {
-		strncpy(rtext, gamepad_remap_bound_name(staging[row]), sizeof(rtext) - 1);
-		rtext[sizeof(rtext) - 1] = '\0';
-	} else if (row == GP_ROW_STICK_LAYOUT) {
+	if (row == GP_ROW_STICK_LAYOUT) {
 		strncpy(rtext, staging_layout ? "Modern" : "Standard", sizeof(rtext) - 1);
+		rtext[sizeof(rtext) - 1] = '\0';
+	} else if (row >= GP_ACTIONS_START && row <= GP_NUM_ACTIONS) {
+		strncpy(rtext, gamepad_remap_bound_name(staging[row - GP_ACTIONS_START]), sizeof(rtext) - 1);
 		rtext[sizeof(rtext) - 1] = '\0';
 	} else {
 		return;   // Reset/Cancel/Apply have no right-hand value to draw.
@@ -313,6 +361,115 @@ static int gamepad_remap_row_at(int x, int y) {
 	return -1;
 }
 
+// --- Scrolling ----------------------------------------------------------------------
+//
+// GP_NUM_ROWS grew from 11 to 18 once the 7 new actions below were added, which no
+// longer reliably fits one screen (it did originally, which is the only reason this
+// screen never needed scrolling before). This is a simple windowed scroll: only
+// [scroll, scroll+visible_rows) is ever laid out/drawn/hit-tested at a time, and the
+// cursor drags the window along with it exactly like kconfig.c's own kconfig_sub()
+// list would need to for the same reason -- there's no separate "scrollbar" widget
+// anywhere else in this game's UI to borrow from, so this is a new, minimal mechanism
+// rather than reusing a pattern that doesn't otherwise exist in this codebase.
+
+// (Re)computes every row's y position for the given scroll offset. Rows outside the
+// visible window still get a (now off-screen) y -- gamepad_remap_row_at() and the draw
+// loops below simply never touch them, so there's no need to special-case "invisible"
+// rows structurally, only to skip drawing/hit-testing them.
+static void gamepad_remap_layout_rows(int scroll) {
+	int i;
+	for (i = 0; i < GP_NUM_ROWS; i++) {
+		Gamepad_remap_row_y[i] = (int) ((GP_ROWS_START_Y + (i - scroll) * Gamepad_remap_row_h) * f2fl(Scale_y));
+	}
+}
+
+// Erases the whole scrollable list area (NOT just one row) -- used whenever the window
+// scrolls, since every visible row's on-screen identity just changed, unlike an
+// in-place cursor move or a capture's redraw, which only ever touch specific rows.
+static void gamepad_remap_erase_rows_area(void) {
+	int x0 = (int) (20 * f2fl(Scale_x));
+	int x1 = (int) (grd_curcanv->cv_bitmap.bm_w - 20 * f2fl(Scale_x));
+	int y0 = (int) (GP_ROWS_START_Y * f2fl(Scale_y)) - 1;
+	nm_restore_background(x0, y0, x1 - x0, grd_curcanv->cv_bitmap.bm_h - y0);
+}
+
+// Draws every row currently inside [scroll, scroll+visible_rows) -- the one call site
+// every redraw path below needs (initial paint, after a scroll, after Reset, after a
+// capture, which can steal a binding from any row including ones not on screen).
+static void gamepad_remap_draw_visible(int scroll, int visible_rows, int staging[GP_NUM_ACTIONS], int staging_layout, int citem) {
+	int row, last = scroll + visible_rows;
+	if (last > GP_NUM_ROWS) last = GP_NUM_ROWS;
+	for (row = scroll; row < last; row++) {
+		gamepad_remap_draw_row(row, staging, staging_layout, row == citem);
+	}
+}
+
+// How many rows actually fit below GP_ROWS_START_Y, in the same unscaled logical units
+// Gamepad_remap_row_h is already kept in (see the comment on that variable) -- so this
+// has to be called only once row_h is known, after grd_curcanv/Scale_y are both valid.
+static int gamepad_remap_visible_row_count(void) {
+	int screen_h_logical = (int) (grd_curcanv->cv_bitmap.bm_h / f2fl(Scale_y));
+	int avail_logical = screen_h_logical - GP_ROWS_START_Y - 20;   // 20 == bottom margin
+	int visible_rows = avail_logical / Gamepad_remap_row_h;
+	if (visible_rows < 1) visible_rows = 1;
+	if (visible_rows > GP_NUM_ROWS) visible_rows = GP_NUM_ROWS;
+	return visible_rows;
+}
+
+// Solid blue "more above/below" arrows, right side of the screen, replacing an earlier
+// text hint (see the "add scrolling" request this screen was first built for, vs. this
+// later "arrows instead of text, moved to the right" follow-up).
+//
+// gr_poly()/gr_upoly() -- the engine's only filled-polygon primitive -- are dead code in
+// this build (#ifdef'd out in 2d/poly.c, USE_POLY_CODE is never defined), so a filled
+// triangle here is hand-rasterized as a stack of single-row gr_urect() strips instead --
+// h horizontal 1px-tall bars, each narrower or wider than the last, exactly the shape a
+// real polygon fill would produce for an isoceles triangle. gr_urect() takes plain
+// already-scaled pixel ints (no fixed-point conversion needed), same as every other
+// coordinate this file already computes by hand.
+#define GP_ARROW_COLOR GR_GETCOLOR(9, 9, 31)
+
+static void gamepad_remap_draw_triangle(int cx, int top_y, int w, int h, int pointing_down) {
+	int i;
+	gr_setcolor(GP_ARROW_COLOR);
+	for (i = 0; i < h; i++) {
+		int half_w = pointing_down ? (w * (h - i)) / (h * 2) : (w * (i + 1)) / (h * 2);
+		gr_urect(cx - half_w, top_y + i, cx + half_w, top_y + i);
+	}
+}
+
+// Up arrow lives in the GP_INFO_Y band -- the same slot the "Press a button..." capture
+// prompt uses (see gamepad_remap_draw_prompt() above). The two never show at once
+// (capture is its own sub-loop), and reusing that function's own erase is what clears
+// this arrow away, rather than needing a second erase call of its own, whenever a
+// capture prompt needs that band instead.
+static void gamepad_remap_draw_up_arrow(int scroll) {
+	int arrow_w = (int) (14 * f2fl(Scale_x));
+	int arrow_h = (int) (8 * f2fl(Scale_y));
+	int cx = grd_curcanv->cv_bitmap.bm_w - (int) (30 * f2fl(Scale_x));
+	int top_y = (int) (GP_INFO_Y * f2fl(Scale_y)) + 2;
+
+	gamepad_remap_draw_prompt(NULL);   // erases the whole band first
+	if (scroll > 0) {
+		gamepad_remap_draw_triangle(cx, top_y, arrow_w, arrow_h, 0);
+	}
+}
+
+// Down arrow lives just below the last visible row, inside the bottom margin
+// gamepad_remap_visible_row_count() already reserves -- already covered by
+// gamepad_remap_erase_rows_area()'s erase span, so (unlike the up arrow) this needs no
+// erase call of its own; every caller already erased that whole area first.
+static void gamepad_remap_draw_down_arrow(int scroll, int visible_rows) {
+	if (scroll + visible_rows < GP_NUM_ROWS) {
+		int arrow_w = (int) (14 * f2fl(Scale_x));
+		int arrow_h = (int) (8 * f2fl(Scale_y));
+		int cx = grd_curcanv->cv_bitmap.bm_w - (int) (30 * f2fl(Scale_x));
+		int last_row = scroll + visible_rows - 1;
+		int top_y = Gamepad_remap_row_y[last_row] + Gamepad_remap_erase_h + 4;
+		gamepad_remap_draw_triangle(cx, top_y, arrow_w, arrow_h, 1);
+	}
+}
+
 extern void delay(unsigned long time);          // main/kconfig.c -- ~100Hz usleep throttle.
 extern void game_flush_inputs(void);
 extern void stop_time(void);
@@ -331,8 +488,9 @@ void do_remap_gamepad_menu(void) {
 	int staging[GP_NUM_ACTIONS];
 	int staging_layout;
 	int i, w, h, aw, k, ek, citem, ocitem, time_stopped = 0;
-	int captured;
+	int captured, action_idx;
 	int mouse_x, mouse_y, mouse_up, tapped_row;
+	int scroll, oscroll, visible_rows;
 
 	memcpy(staging, Gamepad_bound_keycodes, sizeof(staging));
 	staging_layout = Gamepad_stick_layout;
@@ -385,15 +543,14 @@ void do_remap_gamepad_menu(void) {
 	// glyphs no matter which one a row was last drawn with.
 	Gamepad_remap_erase_h = (int) (GP_CURRENT_FONT->ft_h * f2fl(Scale_y)) + 4;
 
-	for (i = 0; i < GP_NUM_ROWS; i++) {
-		Gamepad_remap_row_y[i] = (GP_ROWS_START_Y + i * Gamepad_remap_row_h) * f2fl(Scale_y);
-	}
-
-	for (i = 0; i < GP_NUM_ROWS; i++) {
-		gamepad_remap_draw_row(i, staging, staging_layout, 0);
-	}
 	citem = 0;
-	gamepad_remap_draw_row(citem, staging, staging_layout, 1);
+	scroll = 0;
+	visible_rows = gamepad_remap_visible_row_count();
+	gamepad_remap_layout_rows(scroll);
+
+	gamepad_remap_draw_visible(scroll, visible_rows, staging, staging_layout, citem);
+	gamepad_remap_draw_up_arrow(scroll);
+	gamepad_remap_draw_down_arrow(scroll, visible_rows);
 #ifdef OGLES
 	showRenderBuffer();
 #endif
@@ -409,6 +566,7 @@ void do_remap_gamepad_menu(void) {
 		}
 
 		ocitem = citem;
+		oscroll = scroll;
 		switch (k) {
 			case KEY_UP:
 				citem = (citem == 0) ? GP_NUM_ROWS - 1 : citem - 1;
@@ -431,7 +589,25 @@ void do_remap_gamepad_menu(void) {
 			}
 		}
 
-		if (ocitem != citem) {
+		// Drag the scroll window along with the cursor whenever it moved outside the
+		// currently visible range (including the KEY_UP/KEY_DOWN wraparound cases above,
+		// which this handles automatically -- no special-casing needed).
+		if (citem < scroll) {
+			scroll = citem;
+		} else if (citem >= scroll + visible_rows) {
+			scroll = citem - visible_rows + 1;
+		}
+
+		if (scroll != oscroll) {
+			// The window itself moved -- every visible row's on-screen identity just
+			// changed, so repaint the whole thing rather than just the two rows whose
+			// selection changed (this supersedes that narrower redraw below).
+			gamepad_remap_layout_rows(scroll);
+			gamepad_remap_erase_rows_area();
+			gamepad_remap_draw_visible(scroll, visible_rows, staging, staging_layout, citem);
+			gamepad_remap_draw_up_arrow(scroll);
+			gamepad_remap_draw_down_arrow(scroll, visible_rows);
+		} else if (ocitem != citem) {
 			gamepad_remap_draw_row(ocitem, staging, staging_layout, 0);
 			gamepad_remap_draw_row(citem, staging, staging_layout, 1);
 		}
@@ -465,9 +641,11 @@ void do_remap_gamepad_menu(void) {
 			for (i = 0; i < GP_NUM_ACTIONS; i++)
 				staging[i] = Gamepad_remap_actions[i].defaultKeyCode;
 			staging_layout = 0;
-			for (i = 0; i < GP_NUM_ACTIONS; i++)
-				gamepad_remap_draw_row(i, staging, staging_layout, i == citem);
-			gamepad_remap_draw_row(GP_ROW_STICK_LAYOUT, staging, staging_layout, GP_ROW_STICK_LAYOUT == citem);
+			// A reset can change a row that's currently scrolled out of view -- redrawing
+			// just the visible window is enough, since any off-screen row will simply
+			// paint correctly (staging[] already holds the new values) the next time it
+			// scrolls into view.
+			gamepad_remap_draw_visible(scroll, visible_rows, staging, staging_layout, citem);
 			continue;
 		}
 
@@ -497,9 +675,10 @@ void do_remap_gamepad_menu(void) {
 				break;
 			}
 			if (captured != GP_UNBOUND) {
-				staging[citem] = captured;
+				action_idx = citem - GP_ACTIONS_START;
+				staging[action_idx] = captured;
 				for (i = 0; i < GP_NUM_ACTIONS; i++) {
-					if (i != citem && staging[i] == captured) {
+					if (i != action_idx && staging[i] == captured) {
 						staging[i] = GP_UNBOUND;
 					}
 				}
@@ -507,9 +686,12 @@ void do_remap_gamepad_menu(void) {
 				break;
 			}
 		}
-		gamepad_remap_draw_prompt(NULL);
-		for (i = 0; i < GP_NUM_ACTIONS; i++)
-			gamepad_remap_draw_row(i, staging, staging_layout, i == citem);
+		// A capture's "steal" logic (above) can clear another action's binding even if
+		// that row is currently scrolled out of view -- same reasoning as Reset above,
+		// redrawing just the visible window is enough.
+		gamepad_remap_draw_visible(scroll, visible_rows, staging, staging_layout, citem);
+		gamepad_remap_draw_up_arrow(scroll);
+		gamepad_remap_draw_down_arrow(scroll, visible_rows);
 	}
 
 	Gamepad_remap_screen_active = 0;

@@ -2695,6 +2695,118 @@ void game_disable_cheats()
 	Physics_cheat_flag = 0;
 }
 
+// -------------------------------------------------------------------------------------------
+// Cheat effects, factored out of the FINAL_CHEATS typed-sequence handlers below (each
+// function here is that handler's original body, verbatim) so the new in-game Options ->
+// Cheats menu (main/menu.c's do_cheats_menu()) can trigger the exact same effects a player
+// could always get by typing the classic cheat codes -- one implementation of what each
+// cheat actually does, invoked from two different front ends (typed sequence, or menu).
+// See "add a Cheats submenu, leverage the existing cheat codes" request.
+
+void cheat_toggle_invulnerability(void)
+{
+	Players[Player_num].flags ^= PLAYER_FLAGS_INVULNERABLE;
+	HUD_init_message("%s %s!", TXT_INVULNERABILITY, (Players[Player_num].flags&PLAYER_FLAGS_INVULNERABLE) ? TXT_ON : TXT_OFF);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+	Players[Player_num].invulnerable_time = GameTime + i2f(1000);
+}
+
+void cheat_toggle_cloak(void)
+{
+	Players[Player_num].flags ^= PLAYER_FLAGS_CLOAKED;
+	HUD_init_message("%s %s!", TXT_CLOAK, (Players[Player_num].flags&PLAYER_FLAGS_CLOAKED) ? TXT_ON : TXT_OFF);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+	if (Players[Player_num].flags & PLAYER_FLAGS_CLOAKED) {
+		ai_do_cloak_stuff();
+		Players[Player_num].cloak_time = GameTime;
+	}
+}
+
+void cheat_fill_shields(void)
+{
+	HUD_init_message(TXT_FULL_SHIELDS);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+	Players[Player_num].shields = MAX_SHIELDS;
+}
+
+void cheat_grant_all_keys(void)
+{
+	HUD_init_message(TXT_ALL_KEYS);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+	Players[Player_num].flags |= PLAYER_FLAGS_BLUE_KEY | PLAYER_FLAGS_RED_KEY | PLAYER_FLAGS_GOLD_KEY;
+}
+
+// The more generous of the two typed "wowie" cheats (no shareware weapon exclusions) --
+// the natural single "give me everything" choice for a menu, rather than offering both.
+void cheat_full_arsenal(void)
+{
+	int i;
+
+	HUD_init_message("SUPER %s", TXT_WOWIE_ZOWIE);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+
+	Players[Player_num].primary_weapon_flags = 0xff;
+	Players[Player_num].secondary_weapon_flags = 0xff;
+
+	for (i = 0; i<MAX_PRIMARY_WEAPONS; i++)
+		Players[Player_num].primary_ammo[i] = Primary_ammo_max[i];
+
+	for (i = 0; i<MAX_SECONDARY_WEAPONS; i++)
+		Players[Player_num].secondary_ammo[i] = Secondary_ammo_max[i];
+
+	if (Newdemo_state == ND_STATE_RECORDING)
+		newdemo_record_laser_level(Players[Player_num].laser_level, MAX_LASER_LEVEL);
+
+	Players[Player_num].energy = MAX_ENERGY;
+	Players[Player_num].laser_level = MAX_LASER_LEVEL;
+	Players[Player_num].flags |= PLAYER_FLAGS_QUAD_LASERS;
+	update_laser_weapon_info();
+}
+
+void cheat_extra_life(void)
+{
+	if (Players[Player_num].lives<50) {
+		Players[Player_num].lives++;
+		HUD_init_message("Extra life!");
+		digi_play_sample(SOUND_CHEATER, F1_0);
+	}
+}
+
+// AKA the typed "astral" cheat -- walk/fly through walls.
+void cheat_toggle_ghost_mode(void)
+{
+	digi_play_sample(SOUND_CHEATER, F1_0);
+	if (Physics_cheat_flag == 0xBADA55) {
+		Physics_cheat_flag = 0;
+	}
+	else {
+		Physics_cheat_flag = 0xBADA55;
+	}
+	HUD_init_message("%s %s!", "Ghosty mode", Physics_cheat_flag == 0xBADA55 ? TXT_ON : TXT_OFF);
+}
+
+void cheat_toggle_turbo_mode(void)
+{
+	Game_turbo_mode ^= 1;
+	HUD_init_message("%s %s!", "Turbo mode", Game_turbo_mode ? TXT_ON : TXT_OFF);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+}
+
+void cheat_toggle_robot_firing(void)
+{
+	Robot_firing_enabled = !Robot_firing_enabled;
+	HUD_init_message("%s %s!", "Robot firing", Robot_firing_enabled ? TXT_ON : TXT_OFF);
+	digi_play_sample(SOUND_CHEATER, F1_0);
+}
+
+// Menu owns the "ask for a level number" prompt (do_cheats_menu(), main/menu.c) -- this is
+// just the validate-and-go-there half, same bounds check as the typed "farmerjoe" cheat.
+void cheat_warp_to_level(int new_level_num)
+{
+	if (new_level_num != 0 && new_level_num >= 0 && new_level_num <= Last_level)
+		StartNewLevel(new_level_num);
+}
+
 #ifndef	NDEBUG
 int	Debug_slowdown = 0;
 #endif
@@ -3030,27 +3142,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == (0xaa ^ new_cheats[cheat_wowie2_index*NUM_NEW_CHEATS + CHEAT_WOWIE2_OFS])) {
 				if (++cheat_wowie2_index == CHEAT_WOWIE2_LENGTH) {
-					int i;
-
-					HUD_init_message("SUPER %s", TXT_WOWIE_ZOWIE);
-					digi_play_sample(SOUND_CHEATER, F1_0);
-
-					Players[Player_num].primary_weapon_flags = 0xff;
-					Players[Player_num].secondary_weapon_flags = 0xff;
-
-					for (i = 0; i<MAX_PRIMARY_WEAPONS; i++)
-						Players[Player_num].primary_ammo[i] = Primary_ammo_max[i];
-
-					for (i = 0; i<MAX_SECONDARY_WEAPONS; i++)
-						Players[Player_num].secondary_ammo[i] = Secondary_ammo_max[i];
-
-					if (Newdemo_state == ND_STATE_RECORDING)
-						newdemo_record_laser_level(Players[Player_num].laser_level, MAX_LASER_LEVEL);
-
-					Players[Player_num].energy = MAX_ENERGY;
-					Players[Player_num].laser_level = MAX_LASER_LEVEL;
-					Players[Player_num].flags |= PLAYER_FLAGS_QUAD_LASERS;
-					update_laser_weapon_info();
+					cheat_full_arsenal();
 
 					cheat_wowie2_index = 0;
 				}
@@ -3060,9 +3152,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == cheat_allkeys[cheat_allkeys_index]) {
 				if (++cheat_allkeys_index == CHEAT_ALLKEYS_LENGTH) {
-					HUD_init_message(TXT_ALL_KEYS);
-					digi_play_sample(SOUND_CHEATER, F1_0);
-					Players[Player_num].flags |= PLAYER_FLAGS_BLUE_KEY | PLAYER_FLAGS_RED_KEY | PLAYER_FLAGS_GOLD_KEY;
+					cheat_grant_all_keys();
 
 					cheat_allkeys_index = 0;
 				}
@@ -3073,10 +3163,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == cheat_invuln[cheat_invuln_index]) {
 				if (++cheat_invuln_index == CHEAT_INVULN_LENGTH) {
-					Players[Player_num].flags ^= PLAYER_FLAGS_INVULNERABLE;
-					HUD_init_message("%s %s!", TXT_INVULNERABILITY, (Players[Player_num].flags&PLAYER_FLAGS_INVULNERABLE) ? TXT_ON : TXT_OFF);
-					digi_play_sample(SOUND_CHEATER, F1_0);
-					Players[Player_num].invulnerable_time = GameTime + i2f(1000);
+					cheat_toggle_invulnerability();
 
 					cheat_invuln_index = 0;
 				}
@@ -3086,13 +3173,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == cheat_cloak[cheat_cloak_index]) {
 				if (++cheat_cloak_index == CHEAT_CLOAK_LENGTH) {
-					Players[Player_num].flags ^= PLAYER_FLAGS_CLOAKED;
-					HUD_init_message("%s %s!", TXT_CLOAK, (Players[Player_num].flags&PLAYER_FLAGS_CLOAKED) ? TXT_ON : TXT_OFF);
-					digi_play_sample(SOUND_CHEATER, F1_0);
-					if (Players[Player_num].flags & PLAYER_FLAGS_CLOAKED) {
-						ai_do_cloak_stuff();
-						Players[Player_num].cloak_time = GameTime;
-					}
+					cheat_toggle_cloak();
 
 					cheat_cloak_index = 0;
 				}
@@ -3102,9 +3183,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == cheat_shield[cheat_shield_index]) {
 				if (++cheat_shield_index == CHEAT_SHIELD_LENGTH) {
-					HUD_init_message(TXT_FULL_SHIELDS);
-					digi_play_sample(SOUND_CHEATER, F1_0);
-					Players[Player_num].shields = MAX_SHIELDS;
+					cheat_fill_shields();
 
 					cheat_shield_index = 0;
 				}
@@ -3116,15 +3195,12 @@ void ReadControls() {
 				if (++cheat_warp_index == CHEAT_WARP_LENGTH) {
 					newmenu_item m;
 					char text[10] = "";
-					int new_level_num;
 					int item;
 					digi_play_sample(SOUND_CHEATER, F1_0);
 					m.type = NM_TYPE_INPUT; m.text_len = 10; m.text = text;
 					item = newmenu_do(NULL, TXT_WARP_TO_LEVEL, 1, &m, NULL);
 					if (item != -1) {
-						new_level_num = atoi(m.text);
-						if (new_level_num != 0 && new_level_num >= 0 && new_level_num <= Last_level)
-							StartNewLevel(new_level_num);
+						cheat_warp_to_level(atoi(m.text));
 					}
 
 					cheat_warp_index = 0;
@@ -3135,14 +3211,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == cheat_astral[cheat_astral_index]) {
 				if (++cheat_astral_index == CHEAT_ASTRAL_LENGTH) {
-					digi_play_sample(SOUND_CHEATER, F1_0);
-					if (Physics_cheat_flag == 0xBADA55)	{
-						Physics_cheat_flag = 0;
-					}
-					else {
-						Physics_cheat_flag = 0xBADA55;
-					}
-					HUD_init_message("%s %s!", "Ghosty mode", Physics_cheat_flag == 0xBADA55 ? TXT_ON : TXT_OFF);
+					cheat_toggle_ghost_mode();
 					cheat_astral_index = 0;
 				}
 			}
@@ -3151,9 +3220,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == (0xaa ^ new_cheats[cheat_turbomode_index*NUM_NEW_CHEATS + CHEAT_TURBOMODE_OFS])) {
 				if (++cheat_turbomode_index == CHEAT_TURBOMODE_LENGTH) {
-					Game_turbo_mode ^= 1;
-					HUD_init_message("%s %s!", "Turbo mode", Game_turbo_mode ? TXT_ON : TXT_OFF);
-					digi_play_sample(SOUND_CHEATER, F1_0);
+					cheat_toggle_turbo_mode();
 				}
 			}
 			else
@@ -3161,11 +3228,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == (0xaa ^ new_cheats[cheat_newlife_index*NUM_NEW_CHEATS + CHEAT_NEWLIFE_OFS])) {
 				if (++cheat_newlife_index == CHEAT_NEWLIFE_LENGTH) {
-					if (Players[Player_num].lives<50) {
-						Players[Player_num].lives++;
-						HUD_init_message("Extra life!");
-						digi_play_sample(SOUND_CHEATER, F1_0);
-					}
+					cheat_extra_life();
 
 					cheat_newlife_index = 0;
 				}
@@ -3191,9 +3254,7 @@ void ReadControls() {
 
 			if (!(Game_mode&GM_MULTI) && key == (0xaa ^ new_cheats[cheat_robotpause_index*NUM_NEW_CHEATS + CHEAT_ROBOTPAUSE_OFS])) {
 				if (++cheat_robotpause_index == CHEAT_ROBOTPAUSE_LENGTH) {
-					Robot_firing_enabled = !Robot_firing_enabled;
-					HUD_init_message("%s %s!", "Robot firing", Robot_firing_enabled ? TXT_ON : TXT_OFF);
-					digi_play_sample(SOUND_CHEATER, F1_0);
+					cheat_toggle_robot_firing();
 
 					cheat_robotpause_index = 0;
 				}
@@ -4113,37 +4174,47 @@ void GameLoop(int RenderFlag, int ReadControlsFlag)
 
 void do_game_menu() {
 	int choice;
-	newmenu_item items[4];
-	
+	newmenu_item items[5];
+	// Cheats live directly on the pause menu, under "Options...", rather than as an Options
+	// submenu entry -- see the "move Cheats up a level" request. Still single-player only,
+	// the same restriction the typed cheat codes enforce (see the FINAL_CHEATS handlers
+	// below, all gated on !(Game_mode&GM_MULTI)).
+	int show_cheats = !(Game_mode & GM_MULTI);
+
 	In_screen = true;
-	
+
 	// HACK: Would be nice if these were coming from .tex or .txb
 	items[0].type = NM_TYPE_MENU;
 	items[0].text = "Abort game...";
 	items[1].type = NM_TYPE_MENU;
 	items[1].text = "Options...";
-	items[2].type = NM_TYPE_MENU;
-	items[2].text = TXT_LOAD_GAME;
-	items[3].type = NM_TYPE_MENU;
-	items[3].text = "Save game...";
-	choice=newmenu_do1(NULL, "Game Menu", 4, items, NULL, 0);
-	
-	switch (choice) {
-		case 0:
-			choice=nm_messagebox( NULL, 2, TXT_YES, TXT_NO, TXT_ABORT_GAME );
-			if (choice == 0) {
-				return;
-			}
-			break;
-		case 1:
-			Config_menu_flag = 1;
-			break;
-		case 2:
-			state_restore_all(1);
-			break;
-		case 3:
-			state_save_all(0);
-			break;
+	if (show_cheats) {
+		items[2].type = NM_TYPE_MENU;
+		items[2].text = "Cheats...";
+	}
+	items[2 + show_cheats].type = NM_TYPE_MENU;
+	items[2 + show_cheats].text = TXT_LOAD_GAME;
+	items[3 + show_cheats].type = NM_TYPE_MENU;
+	items[3 + show_cheats].text = "Save game...";
+	choice=newmenu_do1(NULL, "Game Menu", 4 + show_cheats, items, NULL, 0);
+
+	if (choice == 0) {
+		choice=nm_messagebox( NULL, 2, TXT_YES, TXT_NO, TXT_ABORT_GAME );
+		if (choice == 0) {
+			return;
+		}
+	}
+	else if (choice == 1) {
+		Config_menu_flag = 1;
+	}
+	else if (show_cheats && choice == 2) {
+		do_cheats_menu();
+	}
+	else if (choice == 2 + show_cheats) {
+		state_restore_all(1);
+	}
+	else if (choice == 3 + show_cheats) {
+		state_save_all(0);
 	}
 	In_screen = false;
 	Function_mode = FMODE_GAME;

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2 (9-14-2026)]
+
+### Added
+- Menu option to change size of on-screen touch controls
+- More controller mapping options
+- Cheats menu, available from in-game pause menu
+
+### Changed
+- Placement of some menu items
+
+### Fixed
+- Triggers now map-able
+
 ## [0.1 (8-31-2026)]
 
 ### Added
