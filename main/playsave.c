@@ -257,8 +257,8 @@ static char rcsid[] = "$Id: playsave.c 2.3 1995/05/26 16:16:23 john Exp $";
 //
 // GAMEPAD_REMAP_NUM_ACTIONS covers only the original 7 actions (Fire Primary through
 // Toggle Cockpit) -- deliberately NOT bumped to match gamepad_remap.c's GP_NUM_ACTIONS
-// (14, after "Slide On" through "Cruise Off" were added) even though Gamepad_bound_
-// keycodes[] itself is now 14 long. Resizing this field in place would silently corrupt
+// (16, after "Slide On" through "Cruise Off" and then "Slide Up"/"Slide Down" were added)
+// even though Gamepad_bound_keycodes[] itself is now 16 long. Resizing this field in place would silently corrupt
 // every existing save: an old .plr's on-disk bytes for this field are exactly 7 shorts
 // long, so a 14-short fread here would run past them into the stick-layout/invert-y/
 // touch-scale bytes that follow, both misreading this field AND desyncing every read
@@ -267,12 +267,21 @@ static char rcsid[] = "$Id: playsave.c 2.3 1995/05/26 16:16:23 john Exp $";
 // append-only discipline every other field here already follows.
 #define GAMEPAD_REMAP_NUM_ACTIONS 7
 // The "Slide On" through "Cruise Off" actions added later -- Gamepad_bound_keycodes[7..13].
-// GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS must equal gamepad_remap.c's
-// GP_NUM_ACTIONS (14) -- no shared header ties these together, so keep them in sync by hand.
 #define GAMEPAD_REMAP_NUM_NEW_ACTIONS 7
+// The "Slide Up"/"Slide Down" actions, added after the batch above had already shipped in
+// saves -- Gamepad_bound_keycodes[14..15]. They get a THIRD independent trailing field for
+// exactly the same reason the second batch got its own: growing GAMEPAD_REMAP_NUM_NEW_ACTIONS
+// from 7 to 9 in place would make the fread below come up short on every save written by
+// the previous release (which only has 7 shorts there), silently discarding those 7 good
+// bindings back to defaults.
+// GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS
+// must equal gamepad_remap.c's GP_NUM_ACTIONS (16) -- no shared header ties these together,
+// so keep them in sync by hand.
+#define GAMEPAD_REMAP_NUM_NEWER_ACTIONS 2
 // No fixed bound here -- the real array (gamepad_remap.c) is GAMEPAD_REMAP_NUM_ACTIONS +
-// GAMEPAD_REMAP_NUM_NEW_ACTIONS long; every access below already uses an explicit index
-// range, so leaving this unsized avoids yet another count that could drift out of sync.
+// GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS long; every access below
+// already uses an explicit index range, so leaving this unsized avoids yet another count
+// that could drift out of sync.
 extern int Gamepad_bound_keycodes[];
 extern void gamepad_remap_reset_to_defaults(void);
 
@@ -592,6 +601,20 @@ int read_player_file()
 				if (fread(new_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEW_ACTIONS, file) == GAMEPAD_REMAP_NUM_NEW_ACTIONS) {
 					for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEW_ACTIONS; gi++)
 						Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + gi] = new_gamepad_keycodes[gi];
+
+					// "Slide Up"/"Slide Down" -- one more independent trailing field after
+					// that (see GAMEPAD_REMAP_NUM_NEWER_ACTIONS near the top of this file).
+					// Only attempted once the second batch above was read successfully
+					// (can't be present without it), and failure-tolerant on its own: a save
+					// from before these two actions existed just fails this fread and leaves
+					// Gamepad_bound_keycodes[14..15] at the GP_UNBOUND defaults seeded above.
+					{
+						short newer_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEWER_ACTIONS];
+						if (fread(newer_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEWER_ACTIONS, file) == GAMEPAD_REMAP_NUM_NEWER_ACTIONS) {
+							for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEWER_ACTIONS; gi++)
+								Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + gi] = newer_gamepad_keycodes[gi];
+						}
+					}
 				}
 			}
 		}
@@ -763,6 +786,7 @@ int write_player_file()
 	{
 		short gamepad_keycodes[GAMEPAD_REMAP_NUM_ACTIONS];
 		short new_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEW_ACTIONS];
+		short newer_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEWER_ACTIONS];
 		ubyte stick_layout = (ubyte) Gamepad_stick_layout;
 		ubyte invert_y = (ubyte) Config_invert_y;
 		ubyte touch_scale = Config_touch_control_scale;
@@ -772,6 +796,8 @@ int write_player_file()
 			gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[gi];
 		for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEW_ACTIONS; gi++)
 			new_gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + gi];
+		for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEWER_ACTIONS; gi++)
+			newer_gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + gi];
 
 		if (fwrite( kconfig_settings, MAX_CONTROLS*CONTROL_MAX_TYPES, 1, file )!=1)
 			errno_ret=errno;
@@ -791,6 +817,10 @@ int write_player_file()
 		// field, same append-only reasoning as the read side (see the comment on
 		// GAMEPAD_REMAP_NUM_NEW_ACTIONS near the top of this file).
 		else if (fwrite( new_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEW_ACTIONS, file ) != GAMEPAD_REMAP_NUM_NEW_ACTIONS)
+			errno_ret=errno;
+		// "Slide Up"/"Slide Down" -- one more trailing field after that, same reasoning
+		// (see GAMEPAD_REMAP_NUM_NEWER_ACTIONS near the top of this file).
+		else if (fwrite( newer_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEWER_ACTIONS, file ) != GAMEPAD_REMAP_NUM_NEWER_ACTIONS)
 			errno_ret=errno;
 	}
 

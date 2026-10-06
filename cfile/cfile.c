@@ -125,7 +125,9 @@ typedef struct hogfile {
 	int 	length;
 } hogfile;
 
-#define MAX_HOGFILES 250
+// Add-on mission HOGs can hold far more entries than the base game's 250-file budget
+// (hitting the limit in cfile_init_hogfile() below is a hard exit).
+#define MAX_HOGFILES 2048
 
 hogfile HogFiles[MAX_HOGFILES];
 char Hogfile_initialized = 0;
@@ -193,6 +195,23 @@ FILE * cfile_get_filehandle( char * filename, char * mode )
 	if (Document_path) {
 		sprintf(temp, "%s/%s", Document_path, filename);
 		fp = fopen(temp, mode);
+		if (!fp) {
+			// Add-on mission packs (.HOG/.MSN) may have been copied with a
+			// different filename case; the Android filesystem is case sensitive.
+			size_t n = strlen(filename);
+			if (n > 4 && n < 200 &&
+				(!strcasecmp(filename + n - 4, ".hog") || !strcasecmp(filename + n - 4, ".msn"))) {
+				size_t i, base = strlen(Document_path) + 1;
+				for (i = 0; i < 2 && !fp; i++) {
+					size_t j;
+					sprintf(temp, "%s/%s", Document_path, filename);
+					// first try upper case, then lower case, for the whole name
+					for (j = base; temp[j]; j++)
+						temp[j] = i ? tolower((unsigned char)temp[j]) : toupper((unsigned char)temp[j]);
+					fp = fopen(temp, mode);
+				}
+			}
+		}
 	}
 	if (!fp) {
 		AAsset* asset = AAssetManager_open(Asset_manager, filename, AASSET_MODE_RANDOM);
@@ -241,9 +260,10 @@ void cfile_init_hogfile(char *fname, hogfile * hog_files, int * nfiles )
 	while( 1 )	
 	{	
 		if ( *nfiles >= MAX_HOGFILES ) {
+			// Too many entries: keep the ones we have rather than killing the app.
 			printf( "ERROR: HOGFILE IS LIMITED TO %d FILES\n",  MAX_HOGFILES );
 			fclose(fp);
-			exit(1);
+			return;
 		}
 		i = fread( hog_files[*nfiles].name, 13, 1, fp );
 		if ( i != 1 )	{

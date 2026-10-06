@@ -940,7 +940,14 @@ int show_briefing_message(int screen_num, char *message)
 					Int3();
 				prev_ch = ch;
 			}
+		} else if (ch == 0) {
+			//ran off the end of the text without a "$S" terminator (common in fan-made
+			//briefings) -- finish this screen instead of reading past the buffer
+			message--;
+			done = 1;
 		} else {
+			if (ch < ' ' || ch > 126)
+				ch = ' ';		//no glyph for control/extended chars
 			prev_ch = ch;
 			Briefing_text_x += show_char_delay(ch, delay_count, robot_num, flashing_cursor);
 #ifdef OGLES
@@ -1052,6 +1059,8 @@ void load_screen_text(char *filename, char **buf)
 
 		strcpy(nfilename, filename);
 		ptr = strrchr(nfilename, '.');
+		if (ptr == NULL)
+			ptr = nfilename + strlen(nfilename);
 		*ptr = '\0';
 		strcat(nfilename, ".txb");
 		if ((ifile = cfopen(nfilename, "rb")) == NULL)
@@ -1060,14 +1069,16 @@ void load_screen_text(char *filename, char **buf)
 
 		len = cfilelength(ifile);
 		//MALLOC(*buf,char, len);//Unable to get this to compile...is it a case issue? -KRB
-		*buf=(char *)malloc(len*sizeof(char));//My hack -KRB
+		*buf=(char *)malloc((len+1)*sizeof(char));//My hack -KRB
 		cfread(*buf, 1, len, ifile);
+		(*buf)[len] = 0;		//text scanners below run until a NUL, so make sure there is one
 		cfclose(ifile);
 	} else {
 		len = cfilelength(tfile);
 		//MALLOC(*buf, char, len);-KRB
-		*buf=(char *)malloc(len*sizeof(char));//-KRB
+		*buf=(char *)malloc((len+1)*sizeof(char));//-KRB
 		cfread(*buf, 1, len, tfile);
+		(*buf)[len] = 0;		//text scanners below run until a NUL, so make sure there is one
 		cfclose(tfile);
 	}
 
@@ -1081,6 +1092,16 @@ void load_screen_text(char *filename, char **buf)
 				encode_rotate_left(ptr);
 			}
 		}
+	}
+
+	//Drop carriage returns: fan-made briefing files are often DOS (CR+LF) text, and a
+	//CR would otherwise be drawn as a character (no such glyph -> crash).
+	{
+		char *src = *buf, *dst = *buf;
+		for (i = 0; i < len; i++, src++)
+			if (*src != 13)
+				*dst++ = *src;
+		*dst = 0;
 	}
 
 }

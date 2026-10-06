@@ -11,6 +11,12 @@
 
 bool Surface_was_destroyed = false;
 
+// Bumped every time the EGL surface/context is torn down and recreated (app minimized and
+// restored, etc.). Custom-drawn screens that paint their background once -- see
+// do_remap_gamepad_menu() in gamepad_remap.c -- compare against this to know when
+// everything they put on screen is gone and needs a full repaint.
+int Surface_recreate_count = 0;
+
 extern JavaVM *jvm;
 extern jobject Descent_view;
 extern bool Want_pause;
@@ -96,6 +102,7 @@ void showRenderBuffer() {
 							 EGL_SWAP_BEHAVIOR,
 							 EGL_BUFFER_PRESERVED);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			Surface_recreate_count++;
 
 			// Hack to show stuff like menus
 			if (Game_mode != GM_NORMAL || In_screen) {

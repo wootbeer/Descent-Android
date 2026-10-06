@@ -267,6 +267,61 @@ int do_difficulty_menu()
 	return 0;
 }
 
+// Mission chooser for New Game. This replaces the DOS-era newmenu_listbox1(), which draws
+// into a 320x200 offscreen buffer, has no touch/OpenGL support, and showed nothing on screen
+// here (leaving the game apparently frozen until a key was pressed). It's an ordinary
+// newmenu with a few missions per page plus "Next/Previous Page" rows, so touch and gamepad
+// both work. Returns the chosen index into Mission_list, or -1 if cancelled.
+#define MISSIONS_PER_PAGE 6
+static int do_mission_select_menu(int n_missions, int default_mission)
+{
+	newmenu_item m[MISSIONS_PER_PAGE + 2];
+	int n_pages = (n_missions + MISSIONS_PER_PAGE - 1) / MISSIONS_PER_PAGE;
+	int page = default_mission / MISSIONS_PER_PAGE;
+	int citem = default_mission % MISSIONS_PER_PAGE;
+
+	for (;;) {
+		int first = page * MISSIONS_PER_PAGE;
+		int count = n_missions - first;
+		int n = 0, prev_row = -1, next_row = -1, choice, i;
+
+		if (count > MISSIONS_PER_PAGE)
+			count = MISSIONS_PER_PAGE;
+
+		for (i = 0; i < count; i++) {
+			m[n].type = NM_TYPE_MENU;
+			m[n].text = Mission_list[first + i].mission_name;
+			n++;
+		}
+		if (page > 0) {
+			prev_row = n;
+			m[n].type = NM_TYPE_MENU; m[n].text = "<< Previous Page";
+			n++;
+		}
+		if (page < n_pages - 1) {
+			next_row = n;
+			m[n].type = NM_TYPE_MENU; m[n].text = "Next Page >>";
+			n++;
+		}
+
+		choice = newmenu_do1("New Game", "Select mission", n, m, NULL, citem);
+
+		if (choice < 0)
+			return -1;
+		if (choice == prev_row) {
+			page--;
+			citem = 0;
+			continue;
+		}
+		if (choice == next_row) {
+			page++;
+			citem = 0;
+			continue;
+		}
+		return first + choice;
+	}
+}
+
 void do_new_game_menu()
 {
 	int n_missions,new_level_num,player_highest_level;
@@ -285,7 +340,7 @@ void do_new_game_menu()
 				default_mission = i;
 		}
 		
-		new_mission_num = newmenu_listbox1( "New Game\n\nSelect mission", n_missions, m, 1, default_mission, NULL );
+		new_mission_num = do_mission_select_menu( n_missions, default_mission );
 		
 		if (new_mission_num == -1)
 			return;		//abort!
@@ -293,7 +348,7 @@ void do_new_game_menu()
 		strcpy(config_last_mission, m[new_mission_num]  );
 		
 		if (!load_mission(new_mission_num)) {
-			nm_messagebox( NULL, 1, TXT_OK, "Error in Mission file");
+			nm_messagebox( NULL, 1, TXT_OK, "Error in Mission file\n\n%s", Mission_load_error);
 			return;
 		}
 	}
@@ -913,7 +968,7 @@ static int Options_menu_have_gyroscope = 0;
 
 void joydef_menuset(int nitems, newmenu_item * items, int *last_key, int citem )
 {
-	int brightness_item = 11 + Options_menu_have_gyroscope;
+	int brightness_item = 10 + Options_menu_have_gyroscope;
 
 	nitems=nitems;
 	*last_key = *last_key;
@@ -943,6 +998,10 @@ void joydef_menuset(int nitems, newmenu_item * items, int *last_key, int citem )
 
 extern void do_remap_gamepad_menu(void);
 
+// Options menu "Add Mission Packs" -- Descent/src/main/cpp/motion.c. Pops Android's folder
+// picker over the game so the player can import add-on mission packs (.MSN + .HOG files).
+extern void openMissionPackPicker(void);
+
 // Options menu "Touch Scaling" slider -- Descent/src/main/cpp/controls.c. Persisted the
 // same way, one more trailing byte (main/playsave.c).
 extern ubyte Config_touch_control_scale;
@@ -953,8 +1012,7 @@ extern void touch_control_scale_changed(void);
 // exact same code the classic typed cheat codes (GABBAGABBAHEY, then
 // RACERX/GUILE/TWILIGHT/MITZI/SCOURGE/etc.) already trigger, factored out into these
 // standalone functions in main/game.c so this menu is just a second front end onto the
-// same, single implementation of what each cheat actually does -- see the "add a Cheats
-// submenu, leverage the existing cheat codes" request.
+// same, single implementation of what each cheat actually does.
 extern void cheat_toggle_invulnerability(void);
 extern void cheat_toggle_cloak(void);
 extern void cheat_fill_shields(void);
@@ -1039,56 +1097,68 @@ void do_options_menu()
 {
 	newmenu_item m[14];
 	int i = 0;
+	int open_mission_pack_picker = 0;
 	int have_gyroscope = haveGyroscope();
 	Options_menu_have_gyroscope = have_gyroscope;
 
+	// (The "Reverse Stereo" checkbox was removed from this menu to keep it short. The
+	// setting itself still exists: Config_channels_reversed is read from and written to the
+	// config file as "StereoReverse=0/1" -- see main/config.c.)
 	do {
 		m[0].type = NM_TYPE_SLIDER; m[0].text=TXT_FX_VOLUME; m[0].value=Config_digi_volume;m[0].min_value=0; m[0].max_value=8;
 		m[1].type = NM_TYPE_SLIDER; m[1].text=TXT_MUSIC_VOLUME; m[1].value=Config_midi_volume;m[1].min_value=0; m[1].max_value=8;
-		m[2].type = NM_TYPE_CHECK; m[2].text=TXT_REVERSE_STEREO; m[2].value=Config_channels_reversed;
-		m[3].type = NM_TYPE_TEXT; m[3].text="";
-		m[4].type = NM_TYPE_MENU; m[4].text="Remap Gamepad";
-		m[5].type = NM_TYPE_SLIDER; m[5].text="Look Sensitivity"; m[5].value=Config_joystick_sensitivity; m[5].min_value =0; m[5].max_value = 8;
-		m[6].type = NM_TYPE_SLIDER; m[6].text="Touch Scaling"; m[6].value=Config_touch_control_scale; m[6].min_value=0; m[6].max_value=8;
-		m[7].type = NM_TYPE_CHECK; m[7].text="Invert Y"; m[7].value=Config_invert_y;
-		m[8].type = NM_TYPE_TEXT; m[8].text="";
-		m[9].type = NM_TYPE_CHECK; m[9].text="Ship auto-leveling"; m[9].value=Auto_leveling_on;
+		m[2].type = NM_TYPE_TEXT; m[2].text="";
+		m[3].type = NM_TYPE_MENU; m[3].text="Remap Gamepad";
+		m[4].type = NM_TYPE_SLIDER; m[4].text="Look Sensitivity"; m[4].value=Config_joystick_sensitivity; m[4].min_value =0; m[4].max_value = 8;
+		m[5].type = NM_TYPE_SLIDER; m[5].text="Touch Scaling"; m[5].value=Config_touch_control_scale; m[5].min_value=0; m[5].max_value=8;
+		m[6].type = NM_TYPE_CHECK; m[6].text="Invert Y"; m[6].value=Config_invert_y;
+		m[7].type = NM_TYPE_TEXT; m[7].text="";
+		m[8].type = NM_TYPE_CHECK; m[8].text="Ship auto-leveling"; m[8].value=Auto_leveling_on;
 		if (have_gyroscope) {
-			m[10].type = NM_TYPE_CHECK;
-			m[10].text = "Use Gyroscope";
-			m[10].value = Config_use_gyroscope;
+			m[9].type = NM_TYPE_CHECK;
+			m[9].text = "Use Gyroscope";
+			m[9].value = Config_use_gyroscope;
 		}
-		m[10 + have_gyroscope].type = NM_TYPE_TEXT; m[10 + have_gyroscope].text="";
-		m[11 + have_gyroscope].type = NM_TYPE_SLIDER; m[11 + have_gyroscope].text=TXT_BRIGHTNESS; m[11 + have_gyroscope].value=gr_palette_get_gamma();m[11 + have_gyroscope].min_value=0; m[11 + have_gyroscope].max_value=8;
-		m[12 + have_gyroscope].type = NM_TYPE_MENU; m[12 + have_gyroscope].text="Video Options";
+		m[9 + have_gyroscope].type = NM_TYPE_TEXT; m[9 + have_gyroscope].text="";
+		m[10 + have_gyroscope].type = NM_TYPE_SLIDER; m[10 + have_gyroscope].text=TXT_BRIGHTNESS; m[10 + have_gyroscope].value=gr_palette_get_gamma();m[10 + have_gyroscope].min_value=0; m[10 + have_gyroscope].max_value=8;
+		m[11 + have_gyroscope].type = NM_TYPE_MENU; m[11 + have_gyroscope].text="Video Options";
+		m[12 + have_gyroscope].type = NM_TYPE_MENU; m[12 + have_gyroscope].text="Add Mission Packs";
 
 		i = newmenu_do1( NULL, TXT_OPTIONS, 13 + have_gyroscope, m, joydef_menuset, i );
 
-		if (i == 4) {
+		if (i == 3) {
 			do_remap_gamepad_menu();
 		}
 
-		if (i == 12 + have_gyroscope) {
+		if (i == 11 + have_gyroscope) {
 			do_detail_level_menu_custom();
 		}
 
-		Config_channels_reversed = m[2].value;
-		Config_joystick_sensitivity = m[5].value;
-		if (Config_touch_control_scale != m[6].value) {
-			Config_touch_control_scale = (ubyte) m[6].value;
+		if (i == 12 + have_gyroscope) {
+			// Android's folder picker pauses the app, which destroys the screen contents
+			// saved under this menu. So close Options first (returning to a main menu that
+			// redraws itself after the pause) and launch the picker once we're out --
+			// see the end of this function.
+			open_mission_pack_picker = 1;
+			i = -1;
+		}
+
+		Config_joystick_sensitivity = m[4].value;
+		if (Config_touch_control_scale != m[5].value) {
+			Config_touch_control_scale = (ubyte) m[5].value;
 			touch_control_scale_changed();
 		}
-		Config_invert_y = m[7].value;
-		Auto_leveling_on = m[9].value;
+		Config_invert_y = m[6].value;
+		Auto_leveling_on = m[8].value;
 		if (have_gyroscope) {
-			if (Config_use_gyroscope != m[10].value) {
-				if (m[10].value) {
+			if (Config_use_gyroscope != m[9].value) {
+				if (m[9].value) {
 					startMotion();
 				} else {
 					stopMotion();
 				}
 			}
-			Config_use_gyroscope = m[10].value;
+			Config_use_gyroscope = m[9].value;
 		}
 	} while( i>-1 );
 
@@ -1097,4 +1167,7 @@ void do_options_menu()
 	}
 
 	write_player_file();
+
+	if (open_mission_pack_picker)
+		openMissionPackPicker();
 }

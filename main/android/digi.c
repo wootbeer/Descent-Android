@@ -487,8 +487,6 @@ short next_signature = 0;
 
 int digi_sounds_initialized = 0;
 
-void *testLoadFile(char *szFileName, int *length);
-
 int digi_xlat_sound(int soundno) {
 	if (soundno < 0) return -1;
 
@@ -540,13 +538,6 @@ void digi_close() {
 	digi_system_initialized = 0;
 	timer_system_initialized = 0;
 	Digi_initialized = 0;
-}
-
-extern int loadpats( char * filename );
-
-int digi_load_fm_banks( char * melodic_file, char * drum_file ) {
-	// Don't need this old-school stuff anymore
-	return 0;
 }
 
 int digi_init_midi() {
@@ -675,10 +666,6 @@ void digi_set_max_channels(int n) {
 	if (digi_driver_board <= 0) return;
 
 	digi_reset_digi_sounds();
-}
-
-int digi_get_max_channels() {
-	return digi_max_channels;
 }
 
 int digi_is_channel_playing(int c) {
@@ -885,12 +872,6 @@ void digi_set_digi_volume(int dvolume) {
 void digi_set_volume(int dvolume, int mvolume) {
 	digi_set_midi_volume(mvolume);
 	digi_set_digi_volume(dvolume);
-}
-
-// allocate memory for file, load file, create far pointer
-// with DS in selector.
-void *testLoadFile(char *szFileName, int *length) {
-	return NULL;
 }
 
 void digi_stop_current_song() {
@@ -1390,22 +1371,4 @@ void digi_stop_all() {
 	}
 }
 
-#ifndef NDEBUG
-int verify_sound_channel_free( int channel )
-{
-	int i;
-	if (digi_driver_board>0)	{
-		for (i=0; i<MAX_SOUND_OBJECTS; i++ )	{
-			if ( SoundObjects[i].flags & SOF_USED )	{
-				if ( SoundObjects[i].flags & SOF_PLAYING )	{
-					if ( SoundObjects[i].handle == channel )	{
-						mprintf(( 0, "ERROR STARTING SOUND CHANNEL ON USED SLOT!!\n" ));
-						Int3();	// Get John!
-					}
-				}
-			}
-		}
-	}
-	return 0;
-}
-#endif
+

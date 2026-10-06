@@ -1375,6 +1375,37 @@ int newmenu_do3( char * title, char * subtitle, int nitems, newmenu_item * item,
 		// fall through as real positional input, and leave any real gesture untouched.
 		if (mouse_x == -1 && mouse_y == -1) {
 			mouse_up = 0;
+#ifdef OGLES
+			if (filename != NULL && bg.background != NULL) {
+				// A full-screen background (e.g. the main menu's DESCENT.PCX) was drawn once
+				// before this loop and captured into a GL texture that every redraw below
+				// erases items from. The EGL context was just recreated (see render.c), so
+				// that texture -- and the picture itself -- are gone and the items would be
+				// drawn over black. Draw the background again, recapture it, and redo the
+				// title/subtitle that were drawn on top of it the first time. (The old
+				// texture id belongs to the destroyed context, so it is simply replaced
+				// rather than deleted -- the same number may now be a live texture.)
+				int rty = 15 * f2fl(Scale_factor);
+				int rsw, rsh, raw;
+				gr_set_current_canvas(NULL);
+				nm_draw_background1(filename);
+				gr_set_current_canvas(bg.menu_canvas);
+				bg.background->bm_ogles_tex_id = ogles_save_screen();
+				if (title) {
+					grd_curcanv->cv_font = TITLE_FONT;
+					gr_set_fontcolor( GR_GETCOLOR(31,31,31), -1 );
+					gr_get_string_size(title,&rsw,&rsh,&raw );
+					gr_scale_printf(0x8000, rty, Scale_factor, Scale_factor, title);
+					rty += rsh * f2fl(Scale_factor);
+				}
+				if (subtitle) {
+					grd_curcanv->cv_font = SUBTITLE_FONT;
+					gr_set_fontcolor( GR_GETCOLOR(21,21,21), -1 );
+					gr_scale_printf( 0x8000, rty, Scale_factor, Scale_factor, subtitle );
+				}
+				grd_curcanv->cv_font = NORMAL_FONT;
+			}
+#endif
 			for (i = 0; i < nitems; i++)
 				item[i].redraw = 1;
 		} else if (!mouse_down) {

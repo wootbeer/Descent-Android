@@ -1,8 +1,8 @@
 //
-// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (14) gameplay actions to
+// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (16) gameplay actions to
 // gamepad buttons: the original 7 (Fire Primary/Secondary/Flare, Rear View, Bank
 // Left/Right, Toggle Cockpit) plus Slide On, Bank On, Drop Bomb, Automap, Cruise
-// Faster/Slower/Off -- plus a "Stick Layout" option (Standard/Modern) that changes
+// Faster/Slower/Off, Slide Up and Slide Down -- plus a "Stick Layout" option (Standard/Modern) that changes
 // which physical inputs drive turning, pitching, strafing and thrust (see
 // Gamepad_stick_layout below). Stick Layout is pinned to the very top of the list
 // (row 0), above all the action rows -- see GP_ROW_STICK_LAYOUT/GP_ACTIONS_START
@@ -62,7 +62,7 @@
 #define GP_TRIGGER_LT 1001
 #define GP_TRIGGER_RT 1002
 
-#define GP_NUM_ACTIONS 14
+#define GP_NUM_ACTIONS 16
 #define GP_UNBOUND (-1)
 
 typedef struct GamepadRemapAction {
@@ -72,8 +72,8 @@ typedef struct GamepadRemapAction {
 } GamepadRemapAction;
 
 // The 7 new actions below (Slide On through Cruise Off) default to GP_UNBOUND -- no
-// compiled-in physical button -- per the "don't need these to have default mappings,
-// just the ability to map them" request. Bank On/Cruise Faster/Cruise Slower/Cruise Off
+// compiled-in physical button -- they only need to be mappable, not mapped by default.
+// Bank On/Cruise Faster/Cruise Slower/Cruise Off
 // have no default *keyboard* binding at all in vanilla Descent (kc_keyboard[].value is
 // 0xff/unbound for those by default), so key_handler(KEY_G/H/J/K, ...) alone wouldn't do
 // anything -- kconfig.c's kc_set_controls() now force-wires exactly those 4 scancodes in
@@ -83,6 +83,19 @@ typedef struct GamepadRemapAction {
 // vanilla, so no such override was needed for them. "Map" and "Automap" are the same
 // game function (Select is hardwired to KEY_TAB, Descent's default Automap key -- see
 // DescentView.handleGamepadKey()'s KEYCODE_BUTTON_SELECT case) -- one row here covers both.
+//
+// Slide Up/Slide Down (added after the above) also default to GP_UNBOUND. They need no
+// kconfig.c override either: vanilla Descent already binds them by default
+// (kc_keyboard[15] = numpad minus, kc_keyboard[17] = numpad plus), and those are the exact
+// same two scancodes DescentView's on-screen touch Slide Up/Down buttons already press
+// (see controls.c's SLIDE_UP_BTN/SLIDE_DOWN_BTN).
+//
+// IMPORTANT -- array order here is *storage* order, not on-screen order: an action's index
+// in this table is also its slot in Gamepad_bound_keycodes[] and therefore in the .plr save
+// file (see playsave.c), so new actions must always be appended at the end, never inserted
+// in the middle, or every already-saved binding after the insertion point would shift onto
+// the wrong action. What order the rows appear in on the Remap screen is a separate thing --
+// see Gamepad_remap_display_order further down.
 static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 	{ "Fire Primary",   KEY_LCTRL,    GP_BUTTON_A },
 	{ "Fire Secondary", KEY_SPACEBAR, GP_BUTTON_B },
@@ -98,6 +111,8 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 	{ "Cruise Faster",  KEY_H,        GP_UNBOUND },
 	{ "Cruise Slower",  KEY_J,        GP_UNBOUND },
 	{ "Cruise Off",     KEY_K,        GP_UNBOUND },
+	{ "Slide Up",       KEY_PADMINUS, GP_UNBOUND },
+	{ "Slide Down",     KEY_PADPLUS,  GP_UNBOUND },
 };
 
 // Live, persisted bindings -- consulted every time a gamepad button event arrives.
@@ -106,7 +121,8 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 // directly (see playsave.c's write_player_file()/read_player_file()).
 int Gamepad_bound_keycodes[GP_NUM_ACTIONS] = {
 	GP_BUTTON_A, GP_BUTTON_B, GP_BUTTON_X, GP_BUTTON_Y, GP_BUTTON_L1, GP_BUTTON_R1, GP_BUTTON_THUMBL,
-	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND
+	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND,
+	GP_UNBOUND, GP_UNBOUND
 };
 
 // Which physical inputs drive which analog functions:
@@ -155,6 +171,16 @@ JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_gamepadButtonRaw(JNIEnv
 		// here, outside capture mode, so a capture-completing A press never leaves
 		// a stale confirm flag for the menu loop to misread afterward.
 		Gamepad_remap_confirm_pressed = 1;
+	}
+
+	// Inside the Remap Gamepad screen a button press is only ever a menu gesture (confirm,
+	// or a capture above) -- never the gameplay action it's currently bound to. Dispatching
+	// it used to press that action's key (e.g. Fire's Ctrl) on the way down, and since the
+	// matching release could then be swallowed by a capture that started in between, or
+	// land on a different action after Apply changed the bindings, the key stayed held
+	// forever and wedged all keyboard-style menu input.
+	if (Gamepad_remap_screen_active) {
+		return;
 	}
 
 	for (i = 0; i < GP_NUM_ACTIONS; i++) {
@@ -211,6 +237,16 @@ static const char *gamepad_remap_bound_name(int keyCode) {
 	}
 }
 
+// Releases every key a remappable action can press. Called on entering and leaving the
+// Remap Gamepad screen so no action key can be left "held" by a button-down whose
+// button-up was swallowed or routed to a different action (see gamepadButtonRaw()).
+static void gamepad_remap_release_all_action_keys(void) {
+	int i;
+	for (i = 0; i < GP_NUM_ACTIONS; i++) {
+		key_handler(Gamepad_remap_actions[i].scancode, false);
+	}
+}
+
 static void gamepad_remap_start_capture(void) {
 	Gamepad_remap_captured_keycode = GP_UNBOUND;
 	Gamepad_remap_capturing = 1;
@@ -234,7 +270,7 @@ static int gamepad_remap_poll_confirm(void) {
 // kc_change_key(), the classic DOS "press a key to rebind" screen this is modeled on
 // -- this is a standalone custom draw+input loop, not a newmenu_item screen.
 
-// Stick Layout is row 0 (pinned to the top, per the user's request); the
+// Stick Layout is row 0 (pinned to the top of the list); the
 // GP_NUM_ACTIONS action rows follow at GP_ACTIONS_START..GP_NUM_ACTIONS; Reset/
 // Cancel/Apply come last. GP_NUM_ROWS is unchanged (Stick Layout + actions +
 // Reset/Cancel/Apply == 1 + GP_NUM_ACTIONS + 3 == GP_NUM_ACTIONS + 4).
@@ -244,6 +280,19 @@ static int gamepad_remap_poll_confirm(void) {
 #define GP_ROW_RESET  (GP_NUM_ACTIONS + 1)
 #define GP_ROW_CANCEL (GP_NUM_ACTIONS + 2)
 #define GP_ROW_APPLY  (GP_NUM_ACTIONS + 3)
+
+// On-screen order of the action rows: entry N is the Gamepad_remap_actions[] /
+// staging[] / Gamepad_bound_keycodes[] index shown on action row GP_ACTIONS_START + N.
+// Kept separate from storage order (see the comment on Gamepad_remap_actions) so that
+// Slide Up/Slide Down -- appended last in storage, indices 14 and 15, to keep existing
+// saved bindings valid -- can still be listed right under Slide On where they belong.
+// Must list every action index 0..GP_NUM_ACTIONS-1 exactly once.
+static const int Gamepad_remap_display_order[GP_NUM_ACTIONS] = {
+	0, 1, 2, 3, 4, 5, 6,      // Fire Primary .. Toggle Cockpit
+	7, 14, 15,                // Slide On, Slide Up, Slide Down
+	8, 9, 10, 11, 12, 13      // Bank On, Drop Bomb, Automap, Cruise Faster/Slower/Off
+};
+#define GP_ACTION_AT_ROW(row) (Gamepad_remap_display_order[(row) - GP_ACTIONS_START])
 
 #define GP_TITLE_Y 8
 #define GP_INFO_Y 20
@@ -269,7 +318,7 @@ static const char *gamepad_remap_row_label(int row) {
 	if (row == GP_ROW_RESET) return "Reset to Defaults";
 	if (row == GP_ROW_CANCEL) return "Cancel";
 	if (row == GP_ROW_APPLY) return "Apply";
-	return Gamepad_remap_actions[row - GP_ACTIONS_START].label;
+	return Gamepad_remap_actions[GP_ACTION_AT_ROW(row)].label;
 }
 
 // staging_layout is only meaningful for GP_ROW_STICK_LAYOUT -- pass whatever's current
@@ -311,7 +360,7 @@ static void gamepad_remap_draw_row(int row, int staging[GP_NUM_ACTIONS], int sta
 		strncpy(rtext, staging_layout ? "Modern" : "Standard", sizeof(rtext) - 1);
 		rtext[sizeof(rtext) - 1] = '\0';
 	} else if (row >= GP_ACTIONS_START && row <= GP_NUM_ACTIONS) {
-		strncpy(rtext, gamepad_remap_bound_name(staging[row - GP_ACTIONS_START]), sizeof(rtext) - 1);
+		strncpy(rtext, gamepad_remap_bound_name(staging[GP_ACTION_AT_ROW(row)]), sizeof(rtext) - 1);
 		rtext[sizeof(rtext) - 1] = '\0';
 	} else {
 		return;   // Reset/Cancel/Apply have no right-hand value to draw.
@@ -416,9 +465,8 @@ static int gamepad_remap_visible_row_count(void) {
 	return visible_rows;
 }
 
-// Solid blue "more above/below" arrows, right side of the screen, replacing an earlier
-// text hint (see the "add scrolling" request this screen was first built for, vs. this
-// later "arrows instead of text, moved to the right" follow-up).
+// Solid blue "more above/below" arrows on the right side of the screen, shown only when
+// the list is scrolled away from either end.
 //
 // gr_poly()/gr_upoly() -- the engine's only filled-polygon primitive -- are dead code in
 // this build (#ifdef'd out in 2d/poly.c, USE_POLY_CODE is never defined), so a filled
@@ -482,6 +530,24 @@ extern void showRenderBuffer(void);             // Descent/src/main/cpp/render.c
                                                  // newmenu_do3) or nothing new ever becomes
                                                  // visible on screen.
 
+// Everything this screen puts on the display, from scratch: backdrop, title, rows, scroll
+// arrows. Used for the first paint and again whenever the EGL surface gets recreated
+// (app minimized/restored), which wipes the screen and every texture the backdrop used.
+static void gamepad_remap_paint_all(int scroll, int visible_rows, int staging[GP_NUM_ACTIONS], int staging_layout, int citem) {
+	nm_draw_background(0, 0, grd_curcanv->cv_bitmap.bm_w - 1, grd_curcanv->cv_bitmap.bm_h - 1);
+
+	grd_curcanv->cv_font = GP_TITLE_FONT;
+	gr_set_fontcolor(GR_GETCOLOR(31, 31, 31), -1);
+	gr_scale_string(0x8000, GP_TITLE_Y * f2fl(Scale_y), Scale_factor, Scale_factor, "Remap Gamepad");
+
+	gamepad_remap_layout_rows(scroll);
+	gamepad_remap_draw_visible(scroll, visible_rows, staging, staging_layout, citem);
+	gamepad_remap_draw_up_arrow(scroll);
+	gamepad_remap_draw_down_arrow(scroll, visible_rows);
+}
+
+extern int Surface_recreate_count;
+
 void do_remap_gamepad_menu(void) {
 	grs_canvas *save_canvas;
 	grs_font *save_font;
@@ -491,6 +557,7 @@ void do_remap_gamepad_menu(void) {
 	int captured, action_idx;
 	int mouse_x, mouse_y, mouse_up, tapped_row;
 	int scroll, oscroll, visible_rows;
+	int seen_surface_count = Surface_recreate_count;
 
 	memcpy(staging, Gamepad_bound_keycodes, sizeof(staging));
 	staging_layout = Gamepad_stick_layout;
@@ -555,6 +622,7 @@ void do_remap_gamepad_menu(void) {
 	showRenderBuffer();
 #endif
 
+	gamepad_remap_release_all_action_keys();
 	Gamepad_remap_screen_active = 1;
 
 	for (;;) {
@@ -563,6 +631,17 @@ void do_remap_gamepad_menu(void) {
 		if (k == KEY_ESC) {
 			// Start/ESC at the row-list level == Cancel: discard staging, leave.
 			break;
+		}
+
+		// The app was minimized and restored: the surface (and with it the backdrop and
+		// everything drawn on it) is gone. Repaint the whole screen before doing anything
+		// else this frame.
+		if (seen_surface_count != Surface_recreate_count) {
+			seen_surface_count = Surface_recreate_count;
+			gamepad_remap_paint_all(scroll, visible_rows, staging, staging_layout, citem);
+#ifdef OGLES
+			showRenderBuffer();
+#endif
 		}
 
 		ocitem = citem;
@@ -658,7 +737,7 @@ void do_remap_gamepad_menu(void) {
 		}
 
 		// citem is an action row -- capture a new binding for it.
-		gamepad_remap_draw_prompt("Press a button for this action...  (Start to cancel)");
+		gamepad_remap_draw_prompt("(Start to cancel)");
 		gamepad_remap_start_capture();
 #ifdef OGLES
 		showRenderBuffer();
@@ -675,7 +754,7 @@ void do_remap_gamepad_menu(void) {
 				break;
 			}
 			if (captured != GP_UNBOUND) {
-				action_idx = citem - GP_ACTIONS_START;
+				action_idx = GP_ACTION_AT_ROW(citem);
 				staging[action_idx] = captured;
 				for (i = 0; i < GP_NUM_ACTIONS; i++) {
 					if (i != action_idx && staging[i] == captured) {
@@ -695,6 +774,8 @@ void do_remap_gamepad_menu(void) {
 	}
 
 	Gamepad_remap_screen_active = 0;
+	gamepad_remap_cancel_capture();
+	gamepad_remap_release_all_action_keys();
 
 	// This screen paints edge-to-edge (nm_draw_background(0,0,bm_w-1,bm_h-1) at the top),
 	// unlike the stock Options menu, which is a smaller, content-sized box. Without

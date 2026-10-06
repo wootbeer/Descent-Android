@@ -2701,7 +2701,6 @@ void game_disable_cheats()
 // Cheats menu (main/menu.c's do_cheats_menu()) can trigger the exact same effects a player
 // could always get by typing the classic cheat codes -- one implementation of what each
 // cheat actually does, invoked from two different front ends (typed sequence, or menu).
-// See "add a Cheats submenu, leverage the existing cheat codes" request.
 
 void cheat_toggle_invulnerability(void)
 {
@@ -4176,7 +4175,7 @@ void do_game_menu() {
 	int choice;
 	newmenu_item items[5];
 	// Cheats live directly on the pause menu, under "Options...", rather than as an Options
-	// submenu entry -- see the "move Cheats up a level" request. Still single-player only,
+	// submenu entry. Still single-player only,
 	// the same restriction the typed cheat codes enforce (see the FINAL_CHEATS handlers
 	// below, all gated on !(Game_mode&GM_MULTI)).
 	int show_cheats = !(Game_mode & GM_MULTI);

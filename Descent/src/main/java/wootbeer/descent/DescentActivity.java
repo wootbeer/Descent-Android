@@ -28,6 +28,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.Toast;
 import android.widget.TextView;
 
 import java.io.File;
@@ -37,6 +38,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 
 /**
  * Created by devin on 4/17/16.
@@ -48,6 +52,10 @@ public class DescentActivity extends Activity implements SensorEventListener {
 	private static final String DATA_FILENAME_HOG = "DESCENT.HOG";
 	private static final String DATA_FILENAME_PIG = "DESCENT.PIG";
 	private static final int REQUEST_CODE_OPEN_DATA_FOLDER = 4242;
+	// Add-on mission packs (NAME.MSN + NAME.HOG) are picked on demand from the in-game
+	// Options menu (see openMissionPackPicker() below), or imported along with the base
+	// game data during first-run setup.
+	private static final int REQUEST_CODE_ADD_MISSION_PACKS = 4243;
 
 	// How many times the physical display resolution to render at -- set from the game's own
 	// title-screen "Detail Level Customization" menu (see setRenderScaleIndex() below).
@@ -109,8 +117,7 @@ public class DescentActivity extends Activity implements SensorEventListener {
 		// dpToPx()/pxToDp() below, and their only other caller, controls.c's init_buttons())
 		// were coming out 3-3.5x their nominal dp size instead of the ~2-2.5x this was likely
 		// designed around -- ballooning into a checkerboard that swallowed most of the screen
-		// on modern phone hardware. See the "GUI for on-screen touch controls scaled way too
-		// large" bug report.
+		// on modern phone hardware.
 		//
 		// Below PHONE_SIZE_IN (typical big-phone landscape sum), no bonus at all -- bias stays
 		// 1.0, so dpToPx()/pxToDp() are plain, unmodified density conversions and on-screen
@@ -297,7 +304,9 @@ public class DescentActivity extends Activity implements SensorEventListener {
 		layout.addView(title);
 
 		TextView message = new TextView(this);
-		message.setText("Select the folder that contains your own copy of DESCENT.HOG and DESCENT.PIG.");
+		message.setText("Select the folder that contains your own copy of DESCENT.HOG and DESCENT.PIG.\n\n" +
+				"Any add-on mission packs (.MSN + .HOG files) in that folder will be imported too. " +
+				"You can add more later from Options > Add Mission Packs.");
 		message.setTextColor(Color.LTGRAY);
 		message.setGravity(Gravity.CENTER);
 		message.setPadding(0, (int) dpToPx(16), 0, (int) dpToPx(16));
@@ -363,6 +372,11 @@ public class DescentActivity extends Activity implements SensorEventListener {
 				return;
 			}
 			copyDataFilesFromTree(data.getData());
+		} else if (requestCode == REQUEST_CODE_ADD_MISSION_PACKS) {
+			if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+				return;
+			}
+			importMissionPacksInBackground(data.getData());
 		}
 	}
 
@@ -407,6 +421,12 @@ public class DescentActivity extends Activity implements SensorEventListener {
 			copyUriToFile(pigUri, pigTemp);
 			if (!hogTemp.renameTo(hogFile) || !pigTemp.renameTo(pigFile)) {
 				return "Couldn't finish copying the data files. Please try again.";
+			}
+			// Best effort: bring along any add-on mission packs sitting in the same folder.
+			// A problem here must never block the base game from starting.
+			try {
+				importMissionPacks(treeUri);
+			} catch (RuntimeException ignored) {
 			}
 			return null;
 		} catch (IOException e) {
@@ -469,6 +489,167 @@ public class DescentActivity extends Activity implements SensorEventListener {
 				} catch (IOException ignored) {
 				}
 			}
+		}
+	}
+
+
+	// --- Add-on mission packs ----------------------------------------------------------------
+
+	/**
+	 * Called from native code (see openMissionPackPicker() in motion.c) when the player chooses
+	 * Options > Add Mission Packs. Shows the system folder picker over the running game; the
+	 * chosen folder is then scanned for .MSN / .HOG files and they are copied into app storage.
+	 */
+	@SuppressWarnings("unused")
+	private void openMissionPackPicker() {
+		runOnUiThread(new Runnable() {
+			@Override
+			public void run() {
+				if (Build.VERSION.SDK_INT < 21) {
+					Toast.makeText(DescentActivity.this,
+							"This Android version can't select external files.", Toast.LENGTH_LONG).show();
+					return;
+				}
+				try {
+					Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+					startActivityForResult(intent, REQUEST_CODE_ADD_MISSION_PACKS);
+				} catch (RuntimeException e) {
+					Toast.makeText(DescentActivity.this,
+							"Couldn't open the folder picker.", Toast.LENGTH_LONG).show();
+				}
+			}
+		});
+	}
+
+	private void importMissionPacksInBackground(final Uri treeUri) {
+		Toast.makeText(this, "Importing mission packs...", Toast.LENGTH_SHORT).show();
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				String result;
+				try {
+					result = importMissionPacks(treeUri);
+				} catch (RuntimeException e) {
+					result = "Couldn't import mission packs: " + e.getMessage();
+				}
+				final String message = result;
+				runOnUiThread(new Runnable() {
+					@Override
+					public void run() {
+						Toast.makeText(DescentActivity.this, message, Toast.LENGTH_LONG).show();
+					}
+				});
+			}
+		}).start();
+	}
+
+	/** A file found while walking a picked folder. */
+	private static class PackFile {
+		Uri uri;
+		String destName;
+		long size;
+	}
+
+	/**
+	 * Runs on a background thread. Finds every .MSN / .HOG file in the picked folder (and up to
+	 * two levels of subfolders -- packs are often distributed as a folder), and copies them into
+	 * app storage under upper-case names. DESCENT.HOG is never touched. Returns a short
+	 * user-facing summary.
+	 */
+	private String importMissionPacks(Uri treeUri) {
+		List<PackFile> found = new ArrayList<PackFile>();
+		String rootId = DocumentsContract.getTreeDocumentId(treeUri);
+		collectPackFiles(treeUri, rootId, 0, found);
+
+		int msnCopied = 0, hogCopied = 0, failed = 0, skipped = 0;
+		for (PackFile f : found) {
+			if (f.destName == null) {
+				skipped++;
+				continue;
+			}
+			File dest = new File(getFilesDir(), f.destName);
+			File temp = new File(getFilesDir(), f.destName + ".tmp");
+			try {
+				copyUriToFile(f.uri, temp);
+				if (f.size > 0 && temp.length() != f.size) {
+					throw new IOException("size mismatch");
+				}
+				//noinspection ResultOfMethodCallIgnored
+				dest.delete();
+				if (!temp.renameTo(dest)) {
+					throw new IOException("rename failed");
+				}
+				if (f.destName.endsWith(".MSN")) msnCopied++; else hogCopied++;
+			} catch (IOException e) {
+				//noinspection ResultOfMethodCallIgnored
+				temp.delete();
+				failed++;
+			}
+		}
+
+		if (msnCopied == 0 && hogCopied == 0 && failed == 0) {
+			return "No mission pack files (.MSN / .HOG) found in that folder.";
+		}
+		StringBuilder sb = new StringBuilder();
+		sb.append("Imported ").append(msnCopied).append(msnCopied == 1 ? " mission" : " missions");
+		sb.append(" (").append(hogCopied).append(hogCopied == 1 ? " .HOG file)" : " .HOG files)");
+		if (failed > 0) sb.append(", ").append(failed).append(" failed");
+		if (skipped > 0) sb.append(", ").append(skipped).append(" skipped (bad name)");
+		sb.append(".");
+		if (msnCopied > 0) {
+			sb.append(" Start a New Game to pick one.");
+		}
+		return sb.toString();
+	}
+
+	private void collectPackFiles(Uri treeUri, String parentDocId, int depth, List<PackFile> out) {
+		if (depth > 2 || out.size() > 200) {
+			return;
+		}
+		Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId);
+		Cursor cursor = getContentResolver().query(childrenUri, new String[]{
+				DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+				DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+				DocumentsContract.Document.COLUMN_MIME_TYPE,
+				DocumentsContract.Document.COLUMN_SIZE}, null, null, null);
+		if (cursor == null) {
+			return;
+		}
+		List<String> subfolders = new ArrayList<String>();
+		try {
+			while (cursor.moveToNext()) {
+				String docId = cursor.getString(0);
+				String name = cursor.getString(1);
+				String mime = cursor.getString(2);
+				long size = cursor.isNull(3) ? -1 : cursor.getLong(3);
+				if (name == null) {
+					continue;
+				}
+				if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+					subfolders.add(docId);
+					continue;
+				}
+				String upper = name.toUpperCase(Locale.US);
+				if (!upper.endsWith(".MSN") && !upper.endsWith(".HOG")) {
+					continue;
+				}
+				if (upper.equals(DATA_FILENAME_HOG)) {
+					continue;		// never replace the base game
+				}
+				PackFile f = new PackFile();
+				f.uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+				f.size = size;
+				// DOS 8.3 rules: the engine builds "<NAME>.MSN" / ".HOG" from an 8-char name
+				String stem = upper.substring(0, upper.length() - 4);
+				f.destName = (stem.length() >= 1 && stem.length() <= 8 && stem.matches("[A-Z0-9_~!#$%&'()@^{}\\-]+"))
+						? upper : null;
+				out.add(f);
+			}
+		} finally {
+			cursor.close();
+		}
+		for (String docId : subfolders) {
+			collectPackFiles(treeUri, docId, depth + 1, out);
 		}
 	}
 

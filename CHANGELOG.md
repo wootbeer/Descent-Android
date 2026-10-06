@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3 (10-6-2026)]
+
+### Added
+- Add-on mission pack support: import `.MSN` + `.HOG` pairs from Options > Add Mission Packs
+- Slide Up / Slide Down can now be remapped
+- Touch-friendly mission selection list
+
+### Changed
+- Removed Reverse Stereo from the Options menu (still available as `StereoReverse` in the config file)
+- Remap prompt shortened
+
+### Fixed
+- Remap Gamepad screen background no longer disappears after minimizing and reopening the app
+- Main menu background is redrawn correctly after minimizing and reopening the app
+- Controller input no longer gets stuck after remapping a button
+
 ## [0.2 (9-14-2026)]
 
 ### Added

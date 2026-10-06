@@ -95,3 +95,14 @@ options_crash_log*.txt
 a_button_log*.txt
 resume_log.txt
 
+# Local notes, scratch files and tool/assistant working files -- not part of the project
+dev-notes/
+.claude/
+CLAUDE.md
+Claude outputs/
+*.bak
+*.orig
+*.rej
+
+# Gradle's per-build release output (APKs and its own generated metadata)
+Descent/release/

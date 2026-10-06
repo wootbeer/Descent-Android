@@ -120,3 +120,20 @@ void restartAppForSettingsChange() {
 	(*env)->CallVoidMethod(env, Activity, method);
 	(*env)->DeleteLocalRef(env, clazz);
 }
+
+// Called from the title-screen Options menu ("Add Mission Packs", see do_options_menu() in
+// main/menu.c). Asks DescentActivity to show Android's folder picker over the running game so
+// the player can import add-on mission packs (.MSN + .HOG files). The actual copying happens
+// on a Java background thread; the new missions show up in the New Game mission list the next
+// time it is opened (build_mission_list() rescans the app's document directory each time).
+void openMissionPackPicker() {
+	JNIEnv *env;
+	jclass clazz;
+	jmethodID method;
+
+	(*jvm)->GetEnv(jvm, (void **) &env, JNI_VERSION_1_6);
+	clazz = (*env)->FindClass(env, "wootbeer/descent/DescentActivity");
+	method = (*env)->GetMethodID(env, clazz, "openMissionPackPicker", "()V");
+	(*env)->CallVoidMethod(env, Activity, method);
+	(*env)->DeleteLocalRef(env, clazz);
+}

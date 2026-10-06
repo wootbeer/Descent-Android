@@ -67,6 +67,9 @@ extern mle Mission_list[MAX_MISSIONS];
 extern int Current_mission_num;
 extern char *Current_mission_filename,*Current_mission_longname;
 
+//set by load_mission() when it fails: a short human-readable reason, for the error box
+extern char Mission_load_error[160];
+
 //arrays of name of the level files
 extern char Level_names[MAX_LEVELS_PER_MISSION][13];
 extern char Secret_level_names[MAX_SECRET_LEVELS_PER_MISSION][13];

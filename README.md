@@ -18,6 +18,13 @@ SHA1 hash of DESCENT.HOG:
 On first launch the game will ask you to select the folder with these files.
 If it closes you are not using the correct version of the files.
 
+Add-on Mission Packs
+-------
+Fan-made and commercial add-on missions (a `.MSN` file plus its matching `.HOG` file) can be
+imported from the same folder picker on first launch, or at any time from
+Options > Add Mission Packs. Imported missions show up in the New Game mission list.
+Missions that need files they don't ship with are reported with an error message instead of starting.
+
 Controls
 -------
 Auto show/hide on-screen touch controls.

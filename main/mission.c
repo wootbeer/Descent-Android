@@ -110,6 +110,9 @@ static char rcsid[] = "$Id: mission.c 2.9 1995/05/26 16:16:32 john Exp $";
 #include <string.h>
 #include <ctype.h>
 #include <dirent.h>
+#ifdef ANDROID_NDK
+#include <android/log.h>
+#endif
 
 #include "cfile.h"
 
@@ -121,6 +124,10 @@ static char rcsid[] = "$Id: mission.c 2.9 1995/05/26 16:16:32 john Exp $";
 #include "error.h"
 
 mle Mission_list[MAX_MISSIONS];
+
+char Mission_load_error[160] = "";
+
+extern int AltNum_hogfiles;		//entries found in the current add-on mission's .HOG (cfile.c)
 
 int Current_mission_num;
 char *Current_mission_filename,*Current_mission_longname;
@@ -163,9 +170,10 @@ char *get_value(char *buf)
 {
 	char *t;
 
-	t = strchr(buf,'=')+1;
+	t = strchr(buf,'=');
 
 	if (t) {
+		t++;
 		while (*t && isspace(*t)) t++;
 
 		if (*t)
@@ -213,20 +221,34 @@ int build_mission_list(int anarchy_mode)
 		count = 1;
 #endif
 
-	//now search for levels on disk
-#ifndef ANDROID_NDK
-	if ((dir = opendir( Document_path )) != NULL) {
+	//now search for add-on mission packs on disk: NAME.MSN (+ NAME.HOG) in the
+	//app's document directory.  DOS naming rules apply (name <= 8 chars).
+	if (Document_path && (dir = opendir( Document_path )) != NULL) {
 		while ((ent = readdir( dir )) != NULL  && count<MAX_MISSIONS) {
 			FILE *mfile;
-			int is_anarchy;
-			char temp[13],*t;
+			int is_anarchy, i, dup;
+			char temp[16],*t;
+			size_t namelen;
 
-			strcpy(temp,ent->d_name);
-			if ((t = strchr(temp,'.')) == NULL)
+			t = strrchr(ent->d_name,'.');
+			if (t == NULL || strcasecmp(t,".msn") != 0)
 				continue;
-			*t = 0;			//kill extension
+			namelen = (size_t)(t - ent->d_name);
+			if (namelen == 0 || namelen > 8)
+				continue;
+			memcpy(temp, ent->d_name, namelen);
+			temp[namelen] = 0;
 
-			strncpy( Mission_list[count].filename, temp, 9 );
+			dup = 0;
+			for (i=0; i<count; i++)
+				if (!strcasecmp(Mission_list[i].filename, temp)) {
+					dup = 1;
+					break;
+				}
+			if (dup)
+				continue;
+
+			strcpy( Mission_list[count].filename, temp );
 			Mission_list[count].anarchy_only_flag = is_anarchy = 0;
 
 			sprintf(path, "%s/%s", Document_path, ent->d_name);
@@ -241,9 +263,11 @@ int build_mission_list(int anarchy_mode)
 					char *t;
 					if ((t=strchr(p,';'))!=NULL)
 						*t=0;
-					t = p + strlen(p)-1;
-					while (isspace(*t)) t--;
 					strncpy(Mission_list[count].mission_name,p,MISSION_NAME_LEN);
+					Mission_list[count].mission_name[MISSION_NAME_LEN] = 0;
+					t = Mission_list[count].mission_name + strlen(Mission_list[count].mission_name);
+					while (t > Mission_list[count].mission_name && isspace((unsigned char)t[-1])) t--;
+					*t = 0;
 				}
 				else {
 					fclose(mfile);
@@ -265,8 +289,8 @@ int build_mission_list(int anarchy_mode)
 			}
 
 		}
+		closedir(dir);
 	}
-#endif
 #ifdef USE_CD
 	if ( strlen(destsat_cdpath) )	{
 		int i;
@@ -357,6 +381,7 @@ int build_mission_list(int anarchy_mode)
 int load_mission(int mission_num)
 {
 	Current_mission_num = mission_num;
+	Mission_load_error[0] = 0;
 
 	mprintf(( 0, "Loading mission %d\n", mission_num ));
 
@@ -393,16 +418,38 @@ int load_mission(int mission_num)
 	{		 //NOTE LINK TO ABOVE IF!!!!!
 			//read mission from file 
 		FILE *mfile;
-		char buf[80], tmp[80], *v;
+		char buf[80], tmp[80], path[FILENAME_MAX], *v;
+		static const char *const msn_ext[2] = { ".MSN", ".msn" };
+		static const char *const hog_ext[2] = { ".HOG", ".hog" };
+		int k;
 
-		strcpy(buf,Mission_list[mission_num].filename);
-		strcat(buf,".MSN");
-
-		strcpy(tmp,Mission_list[mission_num].filename);
-		strcat(tmp,".HOG");
+		//find the .HOG (try upper then lower case extension -- the Android
+		//filesystem is case sensitive)
+		sprintf(tmp,"%s%s",Mission_list[mission_num].filename,hog_ext[0]);
+		for (k=0; k<2; k++) {
+			FILE *hf;
+			sprintf(path,"%s/%s%s",Document_path ? Document_path : ".",
+				Mission_list[mission_num].filename,hog_ext[k]);
+			if ((hf = fopen(path,"rb")) != NULL) {
+				fclose(hf);
+				sprintf(tmp,"%s%s",Mission_list[mission_num].filename,hog_ext[k]);
+				break;
+			}
+		}
 		cfile_use_alternate_hogfile(tmp);
+#ifdef ANDROID_NDK
+		__android_log_print(ANDROID_LOG_INFO, "DescentMission", "Loading mission '%s': hog '%s' has %d entries",
+			Mission_list[mission_num].filename, tmp, AltNum_hogfiles);
+#endif
 
-		mfile = fopen(buf,"rt");
+		mfile = NULL;
+		strcpy(buf,Mission_list[mission_num].filename);
+		strcat(buf,msn_ext[0]);
+		for (k=0; k<2 && mfile == NULL; k++) {
+			sprintf(path,"%s/%s%s",Document_path ? Document_path : ".",
+				Mission_list[mission_num].filename,msn_ext[k]);
+			mfile = fopen(path,"rt");
+		}
 #ifdef USE_CD
 		if (mfile == NULL) {
 			if ( strlen(destsat_cdpath) )	{
@@ -414,6 +461,7 @@ int load_mission(int mission_num)
 		}
 #endif
 		if (mfile == NULL) {
+			sprintf(Mission_load_error, "Can't open %s%s", Mission_list[mission_num].filename, msn_ext[0]);
 			Current_mission_num = -1;
 			return 0;		//error!
 		}
@@ -447,6 +495,7 @@ int load_mission(int mission_num)
 					while (*(++bufp) == ' ')
 						;
 
+				add_term(bufp);
 				cfile_use_alternate_hogfile(bufp);
 				mprintf((0, "Hog file override = [%s]\n", bufp));
 			} else if (istok(buf,"briefing")) {
@@ -517,8 +566,40 @@ int load_mission(int mission_num)
 		fclose(mfile);
 
 		if (Last_level <= 0) {
+			sprintf(Mission_load_error, "%s%s lists no levels", Mission_list[mission_num].filename, msn_ext[0]);
 			Current_mission_num = -1;		//no valid mission loaded 
 			return 0;
+		}
+
+		//Make sure every level the mission lists can actually be found (in its own .HOG,
+		//or the base game's).  Otherwise load_level() hits a fatal Error() the moment the
+		//game starts; failing here lets the caller show "Error in Mission file" instead.
+		{
+			int i, n;
+			for (i = 0; i < Last_level; i++)
+				if (!cfexist(Level_names[i])) {
+#ifdef ANDROID_NDK
+					__android_log_print(ANDROID_LOG_ERROR, "DescentMission",
+						"Level '%s' not found (hog '%s' has %d entries)", Level_names[i], tmp, AltNum_hogfiles);
+#endif
+					if (AltNum_hogfiles == 0)
+						sprintf(Mission_load_error, "%s is missing or not a valid HOG file\n(level %s not found)", tmp, Level_names[i]);
+					else
+						sprintf(Mission_load_error, "Level %s not found in %s\n(%d files in that HOG)", Level_names[i], tmp, AltNum_hogfiles);
+					Current_mission_num = -1;
+					return 0;
+				}
+			n = -Last_secret_level;
+			for (i = 0; i < n; i++)
+				if (!cfexist(Secret_level_names[i])) {
+#ifdef ANDROID_NDK
+					__android_log_print(ANDROID_LOG_ERROR, "DescentMission",
+						"Secret level '%s' not found (hog '%s' has %d entries)", Secret_level_names[i], tmp, AltNum_hogfiles);
+#endif
+					sprintf(Mission_load_error, "Secret level %s not found in %s", Secret_level_names[i], tmp);
+					Current_mission_num = -1;
+					return 0;
+				}
 		}
 	}
 
