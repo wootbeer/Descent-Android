@@ -51,6 +51,14 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	private InputMethodManager imm;
 	private final Object renderThreadObj = new Object();
 	private final Set<Integer> connectedGamepadIds = new HashSet<>();
+	// Gamepad key codes this view has seen go down (and handled) but not yet up. A matching
+	// release is always delivered, even if the system tags that key-up with a different input
+	// source than the key-down (some handheld "virtual controller" devices do), and anything
+	// still held is released when the window loses focus -- see releaseAllGamepadInput().
+	private final Set<Integer> gamepadKeysHeld = new HashSet<>();
+	// A/B only: whether the press was handled as a menu confirm/cancel, so its release is
+	// routed the same way even if a menu opened or closed while the button was held.
+	private final Set<Integer> gamepadMenuKeysHeld = new HashSet<>();
 	// How many times the physical display resolution the game is actually rendered at. The
 	// SurfaceHolder's buffer is fixed to this larger size and the system compositor downscales
 	// it to fit the screen, which acts as supersampling -- smoother edges, less texture shimmer.
@@ -140,13 +148,51 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 
 	// --- Gamepad connection tracking -------------------------------------------------------
 
+	private boolean gamepadInputSeen = false;
+
+	// What native code is told: a gamepad only counts as "connected" (touch controls hidden,
+	// stray taps ignored in flight) once it has actually produced input. Some phones expose
+	// virtual input devices that look like gamepads to InputManager but never send anything,
+	// which used to hide the touch controls permanently.
+	private void updateGamepadConnected() {
+		setGamepadConnected(gamepadInputSeen && !connectedGamepadIds.isEmpty());
+	}
+
+	private void markGamepadInputSeen() {
+		if (!gamepadInputSeen) {
+			gamepadInputSeen = true;
+			updateGamepadConnected();
+		}
+	}
+
 	private static boolean isGamepad(InputDevice device) {
 		if (device == null) {
 			return false;
 		}
 		int sources = device.getSources();
-		return (sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+		boolean looksLikeGamepad = (sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
 				|| (sources & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+		if (!looksLikeGamepad) {
+			return false;
+		}
+		// Software-made input devices (remote-control apps, game-assist layers) are not
+		// controllers the player is holding.
+		if (Build.VERSION.SDK_INT >= 16 && device.isVirtual()) {
+			android.util.Log.i("DescentInput", "Ignoring virtual device: " + device.getName());
+			return false;
+		}
+		// A real controller has face buttons.
+		if (Build.VERSION.SDK_INT >= 19) {
+			boolean[] has = device.hasKeys(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B,
+					KeyEvent.KEYCODE_BUTTON_X, KeyEvent.KEYCODE_BUTTON_Y);
+			if (!(has[0] || has[1] || has[2] || has[3])) {
+				android.util.Log.i("DescentInput", "Ignoring device without gamepad buttons: "
+						+ device.getName());
+				return false;
+			}
+		}
+		android.util.Log.i("DescentInput", "Gamepad: " + device.getName());
+		return true;
 	}
 
 	private void scanForGamepads() {
@@ -156,21 +202,21 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				connectedGamepadIds.add(deviceId);
 			}
 		}
-		setGamepadConnected(!connectedGamepadIds.isEmpty());
+		updateGamepadConnected();
 	}
 
 	@Override
 	public void onInputDeviceAdded(int deviceId) {
 		if (isGamepad(InputDevice.getDevice(deviceId))) {
 			connectedGamepadIds.add(deviceId);
-			setGamepadConnected(!connectedGamepadIds.isEmpty());
+			updateGamepadConnected();
 		}
 	}
 
 	@Override
 	public void onInputDeviceRemoved(int deviceId) {
 		if (connectedGamepadIds.remove(deviceId)) {
-			setGamepadConnected(!connectedGamepadIds.isEmpty());
+			updateGamepadConnected();
 		}
 	}
 
@@ -181,7 +227,7 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 		} else {
 			connectedGamepadIds.remove(deviceId);
 		}
-		setGamepadConnected(!connectedGamepadIds.isEmpty());
+		updateGamepadConnected();
 	}
 
 	// --- Gamepad analog input (sticks + triggers) -------------------------------------------
@@ -245,6 +291,12 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			// Always uses the un-inverted up/down mapping regardless of Invert Y: that's a
 			// flight-camera preference and should never change which way a menu scrolls.
 			boolean menuOpen = isMenuOpen();
+
+			if (Math.abs(lx) > 0.5f || Math.abs(ly) > 0.5f || Math.abs(rx) > 0.5f
+					|| Math.abs(ry) > 0.5f || lt > TRIGGER_DEADZONE || rt > TRIGGER_DEADZONE
+					|| hatX != 0f || hatY != 0f) {
+				markGamepadInputSeen();
+			}
 
 			menuNavLeftDown = updateDigitalAxis(menuNavLeftDown, menuOpen && lx < -STICK_DEADZONE, (char) 0xCB);  // KEY_LEFT
 			menuNavRightDown = updateDigitalAxis(menuNavRightDown, menuOpen && lx > STICK_DEADZONE, (char) 0xCD); // KEY_RIGHT
@@ -380,9 +432,19 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	// --- Gamepad buttons (routed through onKeyDown/onKeyUp below) --------------------------
 
 	private boolean handleGamepadKey(int keyCode, boolean down, KeyEvent event) {
-		int source = event.getSource();
+		int source = event != null ? event.getSource() : 0;
 		boolean fromGamepad = (source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
-				|| (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+				|| (source & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
+				|| (!down && gamepadKeysHeld.contains(keyCode));
+		// Extra buttons (handheld back buttons such as M1/M2, C/Z, L2/R2 as keys, R3, Mode,
+		// BUTTON_1..16) are sometimes reported by a separate input device that doesn't
+		// advertise gamepad sources -- still let them through, as long as they are in the
+		// gamepad button key-code ranges (which a keyboard never produces).
+		if (!fromGamepad && !isSpecificGamepadKey(keyCode)
+				&& ((keyCode >= KeyEvent.KEYCODE_BUTTON_A && keyCode <= KeyEvent.KEYCODE_BUTTON_MODE)
+				|| (keyCode >= KeyEvent.KEYCODE_BUTTON_1 && keyCode <= KeyEvent.KEYCODE_BUTTON_16))) {
+			fromGamepad = true;
+		}
 		if (!fromGamepad) {
 			return false;
 		}
@@ -405,7 +467,22 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				// that already reads physical A/B itself via gamepadButtonRaw() below
 				// (isInRemapGamepadScreen()), so it's excluded here to avoid fighting with
 				// that screen's own confirm/capture handling.
-				if (isMenuOpen() && !isInRemapGamepadScreen()) {
+				boolean menuPress;
+				if (down) {
+					menuPress = isMenuOpen() && !isInRemapGamepadScreen();
+					if (menuPress) {
+						gamepadMenuKeysHeld.add(keyCode);
+					} else {
+						gamepadMenuKeysHeld.remove(keyCode);
+					}
+				} else if (gamepadMenuKeysHeld.remove(keyCode)) {
+					menuPress = true;
+				} else if (gamepadKeysHeld.contains(keyCode)) {
+					menuPress = false; // went down as a gameplay press: release that action
+				} else {
+					menuPress = isMenuOpen() && !isInRemapGamepadScreen();
+				}
+				if (menuPress) {
 					if (keyCode == KeyEvent.KEYCODE_BUTTON_A) {
 						if (down) {
 							gamepadMenuConfirm();
@@ -445,10 +522,69 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				key = dpadScancode(keyCode);
 				break;
 			default:
+				// Any other gamepad button -- e.g. a handheld's programmable M1/M2 back buttons
+				// -- is usable if the player bound it in Remap Gamepad (or the remap screen is
+				// open and wants to capture it). System keys are never taken.
+				if (isSystemKey(keyCode)) {
+					return false;
+				}
+				if (gamepadKeyBound(keyCode) || (!down && gamepadKeysHeld.contains(keyCode))) {
+					gamepadButtonRaw(keyCode, down);
+					return true;
+				}
 				return false;
 		}
 		keyHandler(key, down);
 		return true;
+	}
+
+	// Buttons handleGamepadKey() has its own dedicated handling for.
+	private static boolean isSpecificGamepadKey(int keyCode) {
+		switch (keyCode) {
+			case KeyEvent.KEYCODE_BUTTON_A:
+			case KeyEvent.KEYCODE_BUTTON_B:
+			case KeyEvent.KEYCODE_BUTTON_X:
+			case KeyEvent.KEYCODE_BUTTON_Y:
+			case KeyEvent.KEYCODE_BUTTON_L1:
+			case KeyEvent.KEYCODE_BUTTON_R1:
+			case KeyEvent.KEYCODE_BUTTON_THUMBL:
+			case KeyEvent.KEYCODE_BUTTON_START:
+			case KeyEvent.KEYCODE_BUTTON_SELECT:
+			case KeyEvent.KEYCODE_DPAD_UP:
+			case KeyEvent.KEYCODE_DPAD_DOWN:
+			case KeyEvent.KEYCODE_DPAD_LEFT:
+			case KeyEvent.KEYCODE_DPAD_RIGHT:
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	// Keys that belong to the system or to basic navigation and must never be remappable.
+	private static boolean isSystemKey(int keyCode) {
+		switch (keyCode) {
+			case KeyEvent.KEYCODE_BACK:
+			case KeyEvent.KEYCODE_HOME:
+			case KeyEvent.KEYCODE_MENU:
+			case KeyEvent.KEYCODE_APP_SWITCH:
+			case KeyEvent.KEYCODE_POWER:
+			case KeyEvent.KEYCODE_SLEEP:
+			case KeyEvent.KEYCODE_WAKEUP:
+			case KeyEvent.KEYCODE_CAMERA:
+			case KeyEvent.KEYCODE_SEARCH:
+			case KeyEvent.KEYCODE_CALL:
+			case KeyEvent.KEYCODE_ENDCALL:
+			case KeyEvent.KEYCODE_VOLUME_UP:
+			case KeyEvent.KEYCODE_VOLUME_DOWN:
+			case KeyEvent.KEYCODE_VOLUME_MUTE:
+			case KeyEvent.KEYCODE_DPAD_CENTER:
+			case KeyEvent.KEYCODE_ENTER:
+			case KeyEvent.KEYCODE_ESCAPE:
+			case KeyEvent.KEYCODE_DEL:
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	@SuppressLint("ClickableViewAccessibility")
@@ -485,10 +621,27 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 					event.getX(i) * renderScale, event.getY(i) * renderScale,
 					prevX * renderScale, prevY * renderScale);
 		}
+		if (action == MotionEvent.ACTION_CANCEL) {
+			// The system took the touch away (palm/grip rejection, a gesture, a system
+			// overlay). No ACTION_UP will follow, so let go of everything the touch was
+			// holding -- otherwise a held on-screen button, or the mouse "fire" button the
+			// touch was acting as, stays pressed until the game flushes input (a pause).
+			mouseHandler((short) (event.getX() * renderScale), (short) (event.getY() * renderScale),
+					false);
+			return true;
+		}
 		if (!touchHandled && (action == MotionEvent.ACTION_DOWN ||
 				action == MotionEvent.ACTION_UP)) {
+			boolean mouseDown = action == MotionEvent.ACTION_DOWN;
+			// With a gamepad connected, a stray touch during flight (a thumb or palm on the
+			// handheld's screen) must not act as a mouse click -- that is the primary fire
+			// button. Menus still take touches. A release is always passed through.
+			if (mouseDown && gamepadInputSeen && !connectedGamepadIds.isEmpty() && isInGame()
+					&& !isMenuOpen()) {
+				return true;
+			}
 			mouseHandler((short) (event.getX() * renderScale), (short) (event.getY() * renderScale),
-					action == MotionEvent.ACTION_DOWN);
+					mouseDown);
 			return true;
 		} else {
 			mouseSetPos((short) (event.getX() * renderScale), (short) (event.getY() * renderScale));
@@ -507,8 +660,22 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			@Override
 			public void run() {
 				requestFocus();
-				imm.showSoftInput(thiz, InputMethodManager.SHOW_FORCED);
 				textActive = true;
+				// Occasionally the keyboard fails to come up (the input connection went stale
+				// after the window lost focus, e.g. sleep/resume or a system overlay). Restart
+				// the input session first, and retry once shortly after if it still refused.
+				imm.restartInput(thiz);
+				if (!imm.showSoftInput(thiz, InputMethodManager.SHOW_FORCED)) {
+					mainHandler.postDelayed(new Runnable() {
+						@Override
+						public void run() {
+							if (textActive) {
+								requestFocus();
+								imm.showSoftInput(thiz, InputMethodManager.SHOW_FORCED);
+							}
+						}
+					}, 200);
+				}
 			}
 		});
 	}
@@ -527,7 +694,10 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 
 	@Override
 	public boolean onKeyUp(int keyCode, KeyEvent event) {
-		if (handleGamepadKey(keyCode, false, event)) {
+		boolean gamepadHandled = handleGamepadKey(keyCode, false, event);
+		gamepadKeysHeld.remove(keyCode);
+		gamepadMenuKeysHeld.remove(keyCode);
+		if (gamepadHandled) {
 			return true;
 		}
 		if (keyCode == KeyEvent.KEYCODE_DEL) {
@@ -543,6 +713,8 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	@Override
 	public boolean onKeyDown(int keyCode, KeyEvent event) {
 		if (handleGamepadKey(keyCode, true, event)) {
+			gamepadKeysHeld.add(keyCode);
+			markGamepadInputSeen();
 			return true;
 		}
 		if (keyCode == KeyEvent.KEYCODE_DEL) {
@@ -553,6 +725,76 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			keyHandler((char) event.getUnicodeChar(), true);
 		}
 		return event.getUnicodeChar() != 0;
+	}
+
+	/**
+	 * Lets go of every gamepad input this view is currently holding down: buttons, stick/trigger
+	 * "digital" keys, the D-pad hat and the trigger remap pseudo-buttons. Used when the window
+	 * loses focus -- the matching releases are delivered to whatever window has focus instead,
+	 * so without this a key held at that moment stays down in the game until input is flushed.
+	 */
+	private void releaseAllGamepadInput() {
+		for (Integer code : new HashSet<>(gamepadKeysHeld)) {
+			handleGamepadKey(code, false, null);
+		}
+		gamepadKeysHeld.clear();
+		gamepadMenuKeysHeld.clear();
+
+		slideLeftDown = updateDigitalAxis(slideLeftDown, false, (char) 0x4F);   // KEY_PAD1
+		slideRightDown = updateDigitalAxis(slideRightDown, false, (char) 0x51); // KEY_PAD3
+		slideUpDown = updateDigitalAxis(slideUpDown, false, (char) 0x4A);       // KEY_PADMINUS
+		slideDownDown = updateDigitalAxis(slideDownDown, false, (char) 0x4E);   // KEY_PADPLUS
+		turnLeftDown = updateDigitalAxis(turnLeftDown, false, (char) 0xCB);     // KEY_LEFT
+		turnRightDown = updateDigitalAxis(turnRightDown, false, (char) 0xCD);   // KEY_RIGHT
+		pitchUpDown = updateDigitalAxis(pitchUpDown, false, (char) 0xC8);       // KEY_UP
+		pitchDownDown = updateDigitalAxis(pitchDownDown, false, (char) 0xD0);   // KEY_DOWN
+		thrustForwardDown = updateDigitalAxis(thrustForwardDown, false, (char) 0x1E); // KEY_A
+		thrustReverseDown = updateDigitalAxis(thrustReverseDown, false, (char) 0x2C); // KEY_Z
+		fireTriggerPrimaryDown = updateDigitalAxis(fireTriggerPrimaryDown, false, (char) 0x1D);   // KEY_LCTRL
+		fireTriggerSecondaryDown = updateDigitalAxis(fireTriggerSecondaryDown, false, (char) 0x39); // KEY_SPACEBAR
+
+		menuNavLeftDown = updateDigitalAxis(menuNavLeftDown, false, (char) 0xCB);
+		menuNavRightDown = updateDigitalAxis(menuNavRightDown, false, (char) 0xCD);
+		menuNavUpDown = updateDigitalAxis(menuNavUpDown, false, (char) 0xC8);
+		menuNavDownDown = updateDigitalAxis(menuNavDownDown, false, (char) 0xD0);
+		menuNavRsLeftDown = updateDigitalAxis(menuNavRsLeftDown, false, (char) 0xCB);
+		menuNavRsRightDown = updateDigitalAxis(menuNavRsRightDown, false, (char) 0xCD);
+		menuNavRsUpDown = updateDigitalAxis(menuNavRsUpDown, false, (char) 0xC8);
+		menuNavRsDownDown = updateDigitalAxis(menuNavRsDownDown, false, (char) 0xD0);
+
+		// The D-pad hat's target key depends on menu/gameplay state at the time it is
+		// pressed, which may differ from now -- release both possibilities.
+		if (hatLeftDown) {
+			hatLeftDown = false;
+			keyHandler((char) 0xCB, false);
+			keyHandler((char) 0x4F, false);
+		}
+		if (hatRightDown) {
+			hatRightDown = false;
+			keyHandler((char) 0xCD, false);
+			keyHandler((char) 0x51, false);
+		}
+		if (hatUpDown) {
+			hatUpDown = false;
+			keyHandler((char) 0xC8, false);
+			keyHandler((char) 0x1E, false);
+		}
+		if (hatDownDown) {
+			hatDownDown = false;
+			keyHandler((char) 0xD0, false);
+			keyHandler((char) 0x2C, false);
+		}
+
+		triggerLtRemapDown = updateDigitalAxisRaw(triggerLtRemapDown, false, GP_TRIGGER_LT);
+		triggerRtRemapDown = updateDigitalAxisRaw(triggerRtRemapDown, false, GP_TRIGGER_RT);
+	}
+
+	@Override
+	public void onWindowFocusChanged(boolean hasWindowFocus) {
+		super.onWindowFocusChanged(hasWindowFocus);
+		if (!hasWindowFocus) {
+			releaseAllGamepadInput();
+		}
 	}
 
 	@Override
@@ -681,8 +923,17 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 		}
 	}
 
+	/** True while the SurfaceView currently has a usable Surface. Called from native code. */
+	@SuppressWarnings("unused")
+	private boolean surfaceIsValid() {
+		SurfaceHolder h = holder;
+		return h != null && h.getSurface() != null && h.getSurface().isValid();
+	}
+
 	/**
-	 * Initializes EGL for the current thread
+	 * Initializes EGL for the current thread. On failure (e.g. the Surface was torn down again
+	 * before this ran) it cleans up whatever it created and returns with no current context;
+	 * native showRenderBuffer() checks for that and retries once the surface is valid again.
 	 */
 	private void initEgl() {
 		int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
@@ -695,6 +946,10 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 		EGLDisplay eglDisplay;
 		EGLSurface eglSurface;
 		GL10 gl;
+
+		if (!surfaceIsValid()) {
+			return;
+		}
 
 		// NOTE: this method does NOT need to destroy a previous context/surface of its own --
 		// render.c's showRenderBuffer() already does that (eglDestroySurface/eglDestroyContext/
@@ -755,7 +1010,7 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 		egl = (EGL10) EGLContext.getEGL();
 		eglDisplay = egl.eglGetDisplay(EGL10.EGL_DEFAULT_DISPLAY);
 		egl.eglInitialize(eglDisplay, new int[]{1, 0});
-		egl.eglChooseConfig(eglDisplay, new int[]{
+		final int[] configSpec = new int[]{
 				EGL10.EGL_RED_SIZE, 8,
 				EGL10.EGL_GREEN_SIZE, 8,
 				EGL10.EGL_BLUE_SIZE, 8,
@@ -768,11 +1023,67 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				EGL10.EGL_ALPHA_SIZE, 0,
 				EGL10.EGL_DEPTH_SIZE, 16,
 				EGL10.EGL_STENCIL_SIZE, 0,
-				EGL10.EGL_NONE}, configs, 1, num_config);
+				EGL10.EGL_NONE};
+		// The game relies on EGL_BUFFER_PRESERVED (see descentMain() in main.c): menus,
+		// briefings and fades read back the frame that was just presented. Android only honors
+		// that for a config that advertises EGL_SWAP_BEHAVIOR_PRESERVED_BIT, and not every GPU
+		// driver (e.g. Mali) lists that bit on the config it would otherwise pick first --
+		// the result was solid white/gray flashes where the saved background should be.
+		// Keep the usual pick when it already supports that (so devices that worked are
+		// untouched); only when it doesn't, look for a config that does.
+		final int EGL_SURFACE_TYPE = 0x3033;
+		final int EGL_SWAP_BEHAVIOR_PRESERVED_BIT = 0x0400;
+		egl.eglChooseConfig(eglDisplay, configSpec, configs, 1, num_config);
+		boolean hasPreservedBit = false;
+		if (num_config[0] >= 1 && configs[0] != null) {
+			int[] surfaceType = new int[1];
+			if (egl.eglGetConfigAttrib(eglDisplay, configs[0], EGL_SURFACE_TYPE, surfaceType)) {
+				hasPreservedBit = (surfaceType[0] & EGL_SWAP_BEHAVIOR_PRESERVED_BIT) != 0;
+			}
+		}
+		if (!hasPreservedBit) {
+			final int[] preservedSpec = new int[]{
+					EGL10.EGL_RED_SIZE, 8,
+					EGL10.EGL_GREEN_SIZE, 8,
+					EGL10.EGL_BLUE_SIZE, 8,
+					EGL10.EGL_ALPHA_SIZE, 0,
+					EGL10.EGL_DEPTH_SIZE, 16,
+					EGL10.EGL_STENCIL_SIZE, 0,
+					EGL_SURFACE_TYPE, 0x0004 /* EGL_WINDOW_BIT */ | EGL_SWAP_BEHAVIOR_PRESERVED_BIT,
+					EGL10.EGL_NONE};
+			EGLConfig[] preserved = new EGLConfig[1];
+			int[] numPreserved = new int[1];
+			if (egl.eglChooseConfig(eglDisplay, preservedSpec, preserved, 1, numPreserved)
+					&& numPreserved[0] >= 1 && preserved[0] != null) {
+				configs[0] = preserved[0];
+				num_config[0] = numPreserved[0];
+				android.util.Log.i("DescentGL", "Using a config with preserved-swap support");
+			} else {
+				android.util.Log.w("DescentGL", "No EGL config advertises preserved swap");
+			}
+		}
 		eglConfig = configs[0];
+		if (num_config[0] < 1 || eglConfig == null) {
+			return;
+		}
 		eglContext = egl.eglCreateContext(eglDisplay, eglConfig, EGL10.EGL_NO_CONTEXT, attrib_list);
 		eglSurface = egl.eglCreateWindowSurface(eglDisplay, eglConfig, holder, null);
-		egl.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext);
+		if (eglContext == EGL10.EGL_NO_CONTEXT || eglSurface == EGL10.EGL_NO_SURFACE
+				|| !egl.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+			// Don't leak the half-built objects: a leaked EGLSurface keeps the native window
+			// "connected", which makes every later eglCreateWindowSurface() fail too. Return with
+			// no current context; native showRenderBuffer() notices and retries once the
+			// surface is valid again.
+			egl.eglMakeCurrent(eglDisplay, EGL10.EGL_NO_SURFACE, EGL10.EGL_NO_SURFACE,
+					EGL10.EGL_NO_CONTEXT);
+			if (eglSurface != EGL10.EGL_NO_SURFACE) {
+				egl.eglDestroySurface(eglDisplay, eglSurface);
+			}
+			if (eglContext != EGL10.EGL_NO_CONTEXT) {
+				egl.eglDestroyContext(eglDisplay, eglContext);
+			}
+			return;
+		}
 		gl = (GL10) eglContext.getGL();
 
 		// Clear to back
@@ -817,6 +1128,9 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	private static native void setGamepadConnected(boolean connected);
 
 	private static native void gamepadButtonRaw(int keyCode, boolean down);
+
+	// True if this key code is bound to an action in Remap Gamepad, or the remap screen is open.
+	private static native boolean gamepadKeyBound(int keyCode);
 
 	private static native void descentMain(int w, int h, Context activity,
 										   DescentView descentView,

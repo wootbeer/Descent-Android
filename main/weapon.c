@@ -360,13 +360,20 @@ void select_weapon(int weapon_num, int secondary_flag, int print_message, int wa
 //	Select a weapon, primary or secondary.
 void do_weapon_select(int secondary_flag)
 {
+	do_weapon_select_step(secondary_flag, 1);
+}
+
+//	Same as do_weapon_select(), but step is +1 (next weapon) or -1 (previous weapon).
+void do_weapon_select_step(int secondary_flag, int step)
+{
 	int weapon_num = secondary_flag ? Secondary_weapon : Primary_weapon;
 	int	weapon_status;
 	char	*weapon_name;
 	
 	for (int i = 0; i < 5; ++i) {
-		++weapon_num;
+		weapon_num += step;
 		if (weapon_num > 4) weapon_num = 0;
+		if (weapon_num < 0) weapon_num = 4;
 		if (player_has_weapon(weapon_num, secondary_flag) == HAS_ALL) break;
 	}
 	weapon_status = player_has_weapon(weapon_num, secondary_flag);

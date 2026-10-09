@@ -29,8 +29,8 @@ android {
         // install unless versionCode is strictly higher than what's already on the device, so
         // this has to change every time regardless of what any distribution tool (e.g.
         // Obtainium, tracking GitHub release tags) reports as available.
-        versionCode 3
-        versionName "0.3"
+        versionCode 4
+        versionName "0.4"
         externalNativeBuild {
             cmake {
                 cFlags "-DANDROID_NDK", "-DDISABLE_IMPORTGL", "-DOGLES", "-DNASM", "-DNETWORK"
@@ -48,6 +48,14 @@ android {
         }
     }
     buildTypes {
+        // Sign debug builds with the release key too (when keystore.properties exists), so
+        // Android Studio's Run button installs as an in-place update over a release install
+        // instead of failing with a signature mismatch.
+        debug {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
         release {
             minifyEnabled false
             signingConfig hasReleaseSigning ? signingConfigs.release : debug.signingConfig

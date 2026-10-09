@@ -423,8 +423,12 @@ void mem_init()
 	atexit(mem_display_blocks);
 }
 
+// Rough bookkeeping used only for the leak report at exit.  This is a plain stack of sizes,
+// not a per-block table, so it must never be indexed past its end: a normal game session has
+// far more than 1024 allocations live at once.
+#define MAX_TRACKED_MALLOCS 1024
 static unsigned int CurrentMalloc = 0;
-static unsigned int MallocSizes[1024];
+static unsigned int MallocSizes[MAX_TRACKED_MALLOCS];
 
 void * mem_malloc( unsigned int size, char * var, char * filename, int line, int fill_zero )
 {
@@ -455,7 +459,9 @@ void * mem_malloc( unsigned int size, char * var, char * filename, int line, int
 	if ( (base+size) > LargestAddress ) LargestAddress = base+size;
 
 	BytesMalloced += size;
-	MallocSizes[CurrentMalloc++] = size;
+	if (CurrentMalloc < MAX_TRACKED_MALLOCS)
+		MallocSizes[CurrentMalloc] = size;
+	CurrentMalloc++;
 
 	if (fill_zero)
 		memset( ptr, 0, size );
@@ -481,11 +487,15 @@ void mem_free( void * buffer )
 
 	if (ErrorCount)	{
 		fprintf( stderr, "\nMEM_OVERWRITE: Memory after the end of allocated block overwritten.\n" );
-		fprintf( stderr, "\tBlock at 0x%x, size %d\n", buffer, MallocSizes[CurrentMalloc] );
+		fprintf( stderr, "\tBlock at %p\n", buffer );
 		fprintf( stderr, "\t%d/%d check bytes were overwritten.\n", ErrorCount, CHECKSIZE );
 	}
 	
-	BytesMalloced -= MallocSizes[CurrentMalloc--];
+	if (CurrentMalloc > 0) {
+		CurrentMalloc--;
+		if (CurrentMalloc < MAX_TRACKED_MALLOCS && BytesMalloced >= MallocSizes[CurrentMalloc])
+			BytesMalloced -= MallocSizes[CurrentMalloc];
+	}
 
 	free( buffer );
 }

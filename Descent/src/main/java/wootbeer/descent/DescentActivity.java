@@ -80,7 +80,7 @@ public class DescentActivity extends Activity implements SensorEventListener {
 	private SensorManager sensorManager;
 	private File hogFile, pigFile;
 	private float buttonSizeBias;
-	private float[] acceleration;
+	private volatile float[] acceleration;
 	private int mediaPlayerPosition;
 	private int refreshPeriodUs;
 
@@ -685,7 +685,12 @@ public class DescentActivity extends Activity implements SensorEventListener {
 
 	@Override
 	public void onSensorChanged(SensorEvent event) {
-		acceleration = event.values;
+		// Copy: Android reuses (and overwrites, on another thread) the SensorEvent's own
+		// values array, so holding a reference to it can hand native code half-updated data.
+		float[] values = event.values;
+		if (values != null && values.length >= 3) {
+			acceleration = new float[]{values[0], values[1], values[2]};
+		}
 	}
 
 	@Override
@@ -695,15 +700,20 @@ public class DescentActivity extends Activity implements SensorEventListener {
 
 	@SuppressWarnings("unused")
 	private float[] getRotationRate() {
-		if (haveGyroscope()) {
+		// Native code reads this on every poll, possibly before the first sensor event has
+		// arrived (or after the sensor was just turned off), so never return null -- and hand
+		// back a fresh array rather than flipping signs in the stored one, which used to
+		// flip them back and forth on every call.
+		float[] latest = acceleration;
+		if (haveGyroscope() && latest != null && latest.length >= 3) {
+			float[] result = new float[]{latest[0], latest[1], latest[2]};
 			if (getWindowManager().getDefaultDisplay().getRotation() == Surface.ROTATION_90) {
-				acceleration[0] *= -1;
-				acceleration[1] *= -1;
+				result[0] *= -1;
+				result[1] *= -1;
 			}
-			return acceleration;
-		} else {
-			return new float[] {0, 0, 0};
+			return result;
 		}
+		return new float[] {0, 0, 0};
 	}
 
 	private boolean haveGyroscope() {
@@ -711,11 +721,12 @@ public class DescentActivity extends Activity implements SensorEventListener {
 	}
 
 	private void startMotion() {
+		if (sensorManager == null || gyroscopeSensor == null) return;
 		sensorManager.registerListener(this, gyroscopeSensor, refreshPeriodUs);
 	}
 
 	private void stopMotion() {
-		sensorManager.unregisterListener(this);
+		if (sensorManager != null) sensorManager.unregisterListener(this);
 	}
 
 	@SuppressWarnings("unused")

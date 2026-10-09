@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4 (10-9-2026)]
+
+### Added
+- Weapon-cycling binds  
+- Can now bind M1/M2, extra buttons  
+
+### Fixed
+- Crash when minimized and restored rapidly  
+- Gyro crash   
+- Stuck touch and button fixes  
+- On-screen keyboard could fail to appear  
+- Menu flashing on Mali  
+- Touch controls perma hidden  
+- Other random stability fixes  
+
 ## [0.3 (10-6-2026)]
 
 ### Added

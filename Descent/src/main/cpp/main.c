@@ -83,6 +83,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 	return JNI_VERSION_1_6;
 }
 
+extern void setPreservedSwapBehavior(void);
+
 JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_descentMain(JNIEnv *env, jclass type, jint w, jint h,
 												  jobject activity, jobject descent_view, jobject asset_manager,
 												  jstring document_path, jstring cache_path, jboolean quick_resume) {
@@ -95,8 +97,7 @@ JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_descentMain(JNIEnv *env
 	(*env)->GetJavaVM(env, &jvm);
 
 	// Need to preserve the buffer for things to display corretly
-	eglSurfaceAttrib(eglGetCurrentDisplay(), eglGetCurrentSurface(EGL_DRAW), EGL_SWAP_BEHAVIOR,
-					 EGL_BUFFER_PRESERVED);
+	setPreservedSwapBehavior();
 
 	// Get Android things for accessing files
 	Asset_manager = AAssetManager_fromJava(env, asset_manager);

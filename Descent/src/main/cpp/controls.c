@@ -37,6 +37,8 @@
 #define ACTION_MOVE 2
 #define ACTION_POINTER_DOWN 5
 #define ACTION_POINTER_UP 6
+#define ACTION_CANCEL 3
+#define MAX_TOUCH_POINTERS 10
 
 typedef struct GameButton {
 	int x, y, w, h;
@@ -46,8 +48,10 @@ typedef struct GameButton {
 } GameButton;
 
 GameButton buttons[NUM_BUTTONS];
-int touchButtons[10];
-int trackingTouch;
+// -1 == this pointer isn't holding a button. (Zero-initialised these meant "holding button 0",
+// so releasing a pointer that never touched a button released the Accelerate keys.)
+int touchButtons[MAX_TOUCH_POINTERS] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int trackingTouch = -1;
 
 // Set from Java whenever a gamepad-class InputDevice is connected/disconnected.
 // While true, the on-screen touch buttons are neither drawn nor hit-tested.
@@ -360,6 +364,27 @@ JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_touchHandler(JNIEnv
 													   jint action, jint pointerId,
 													   jfloat x, jfloat y, jfloat prevX,
 													   jfloat prevY) {
+	// Android allows more simultaneous pointer ids than we track; ignore the extras.
+	if (pointerId < 0 || pointerId >= MAX_TOUCH_POINTERS) {
+		return false;
+	}
+	// Releases are always honoured, even when the on-screen controls are no longer active
+	// (a menu opened, or a gamepad was connected, while a finger was held on a button) --
+	// otherwise the key that finger was holding would stay pressed.
+	if (action == ACTION_CANCEL) {
+		// The system took the whole touch away and no ACTION_UP will follow: let go of
+		// every held button, not just this pointer's.
+		int p;
+		for (p = 0; p < MAX_TOUCH_POINTERS; ++p) {
+			handle_up(p);
+		}
+		return false;
+	}
+	if ((action == ACTION_UP || action == ACTION_POINTER_UP) &&
+		!(Game_mode == GM_NORMAL && !In_screen && !Gamepad_connected)) {
+		handle_up(pointerId);
+		return false;
+	}
 	if (Game_mode == GM_NORMAL && !In_screen && !Gamepad_connected) {
 		switch (action) {
 			case ACTION_DOWN:
@@ -387,5 +412,23 @@ JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_touchHandler(JNIEnv
 // connected, the on-screen touch buttons are hidden and stop consuming touches.
 JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_setGamepadConnected(JNIEnv *env, jclass type,
 																			 jboolean connected) {
+	bool was_connected = Gamepad_connected;
 	Gamepad_connected = connected;
+	if (connected && !was_connected) {
+		// A finger left resting on the touch controls when a gamepad takes over would
+		// otherwise leave its direction/action key held down (touch events stop being
+		// routed here, so the matching release never arrives). Let go of everything the
+		// touch UI could be holding and forget any in-progress touches.
+		int i, j;
+		for (i = 0; i < NUM_BUTTONS; ++i) {
+			for (j = 0; j < buttons[i].nKeys; ++j) {
+				key_handler(buttons[i].keys[j], false);
+			}
+		}
+		for (i = 0; i < MAX_TOUCH_POINTERS; ++i) {
+			touchButtons[i] = -1;
+		}
+		trackingTouch = -1;
+		touch_dx = touch_dy = 0;
+	}
 }

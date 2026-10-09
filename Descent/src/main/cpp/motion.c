@@ -44,6 +44,15 @@ void getRotationRate(double *x, double *y, double *z) {
 	clazz = (*env)->FindClass(env, "wootbeer/descent/DescentActivity");
 	method = (*env)->GetMethodID(env, clazz, "getRotationRate", "()[F");
 	acceleration = (*env)->CallObjectMethod(env, Activity, method);
+	if (acceleration == NULL || (*env)->GetArrayLength(env, acceleration) < 3) {
+		// Java side is meant to always return 3 values; treat anything else as "no rotation"
+		// rather than reading through a null/short array.
+		*x = *y = *z = 0.0;
+		(*env)->DeleteLocalRef(env, clazz);
+		if (acceleration != NULL)
+			(*env)->DeleteLocalRef(env, acceleration);
+		return;
+	}
 	accelerationElements = (*env)->GetFloatArrayElements(env, acceleration, 0);
 	*x = accelerationElements[0];
 	*y = accelerationElements[1];

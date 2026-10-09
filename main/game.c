@@ -3594,6 +3594,16 @@ void ReadControls() {
 			do_weapon_select(1);
 			break;
 
+			//	Previous primary/secondary weapon (the number keys above only cycle forward).
+			//	Used by the gamepad remap actions "Prev Primary"/"Prev Secondary".
+		case KEY_LBRACKET:
+			do_weapon_select_step(0, -1);
+			break;
+
+		case KEY_RBRACKET:
+			do_weapon_select_step(1, -1);
+			break;
+
 		case KEY_SHIFTED + KEY_ESC: //quick exit
 #ifdef EDITOR
 			if (!SafetyCheck()) break;

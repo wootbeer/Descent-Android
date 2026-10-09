@@ -237,6 +237,7 @@ typedef struct weapon_info {
 extern weapon_info Weapon_info[];
 extern int N_weapon_types;
 extern void do_weapon_select(int secondary_flag);
+extern void do_weapon_select_step(int secondary_flag, int step);	//step: +1 next, -1 previous
 extern void show_weapon_status(void);
 
 extern byte	Primary_weapon, Secondary_weapon;

@@ -1,5 +1,5 @@
 //
-// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (16) gameplay actions to
+// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (20) gameplay actions to
 // gamepad buttons: the original 7 (Fire Primary/Secondary/Flare, Rear View, Bank
 // Left/Right, Toggle Cockpit) plus Slide On, Bank On, Drop Bomb, Automap, Cruise
 // Faster/Slower/Off, Slide Up and Slide Down -- plus a "Stick Layout" option (Standard/Modern) that changes
@@ -29,6 +29,7 @@
 
 #include <jni.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "types.h"
 #include "error.h"
@@ -62,7 +63,7 @@
 #define GP_TRIGGER_LT 1001
 #define GP_TRIGGER_RT 1002
 
-#define GP_NUM_ACTIONS 16
+#define GP_NUM_ACTIONS 20
 #define GP_UNBOUND (-1)
 
 typedef struct GamepadRemapAction {
@@ -113,6 +114,10 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 	{ "Cruise Off",     KEY_K,        GP_UNBOUND },
 	{ "Slide Up",       KEY_PADMINUS, GP_UNBOUND },
 	{ "Slide Down",     KEY_PADPLUS,  GP_UNBOUND },
+	{ "Next Primary",   KEY_1,        GP_UNBOUND },   // game.c: cycles the primary weapon forward
+	{ "Next Secondary", KEY_6,        GP_UNBOUND },   // game.c: cycles the secondary weapon forward
+	{ "Prev Primary",   KEY_LBRACKET, GP_UNBOUND },   // game.c: cycles the primary weapon backward
+	{ "Prev Secondary", KEY_RBRACKET, GP_UNBOUND },   // game.c: cycles the secondary weapon backward
 };
 
 // Live, persisted bindings -- consulted every time a gamepad button event arrives.
@@ -122,7 +127,7 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 int Gamepad_bound_keycodes[GP_NUM_ACTIONS] = {
 	GP_BUTTON_A, GP_BUTTON_B, GP_BUTTON_X, GP_BUTTON_Y, GP_BUTTON_L1, GP_BUTTON_R1, GP_BUTTON_THUMBL,
 	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND,
-	GP_UNBOUND, GP_UNBOUND
+	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND
 };
 
 // Which physical inputs drive which analog functions:
@@ -190,6 +195,21 @@ JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_gamepadButtonRaw(JNIEnv
 	}
 }
 
+// True if keyCode is bound to any action, or the Remap Gamepad screen is open (so it can
+// capture any button the device sends -- e.g. a handheld's programmable M1/M2 buttons).
+JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_gamepadKeyBound(JNIEnv *env, jclass type, jint keyCode) {
+	int i;
+	if (Gamepad_remap_screen_active || Gamepad_remap_capturing) {
+		return JNI_TRUE;
+	}
+	for (i = 0; i < GP_NUM_ACTIONS; i++) {
+		if (Gamepad_bound_keycodes[i] == keyCode) {
+			return JNI_TRUE;
+		}
+	}
+	return JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_isInRemapGamepadScreen(JNIEnv *env, jclass type) {
 	return (jboolean) Gamepad_remap_screen_active;
 }
@@ -233,7 +253,23 @@ static const char *gamepad_remap_bound_name(int keyCode) {
 		case GP_BUTTON_THUMBL: return "L3";
 		case GP_TRIGGER_LT:    return "LT";
 		case GP_TRIGGER_RT:    return "RT";
-		default:               return "---";
+		case 98:               return "C";
+		case 101:              return "Z";
+		case 104:              return "L2";
+		case 105:              return "R2";
+		case 107:              return "R3";
+		case 110:              return "Mode";
+		case GP_UNBOUND:       return "---";
+		default: {
+			// Any other button the device sends (e.g. a handheld's M1/M2 back buttons):
+			// name it by its Android key code so it can be told apart.
+			static char name[16];
+			if (keyCode >= 188 && keyCode <= 203)
+				snprintf(name, sizeof(name), "Btn %d", keyCode - 187);
+			else
+				snprintf(name, sizeof(name), "Key %d", keyCode);
+			return name;
+		}
 	}
 }
 
@@ -288,7 +324,9 @@ static int gamepad_remap_poll_confirm(void) {
 // saved bindings valid -- can still be listed right under Slide On where they belong.
 // Must list every action index 0..GP_NUM_ACTIONS-1 exactly once.
 static const int Gamepad_remap_display_order[GP_NUM_ACTIONS] = {
-	0, 1, 2, 3, 4, 5, 6,      // Fire Primary .. Toggle Cockpit
+	0, 1,                    // Fire Primary, Fire Secondary
+	16, 18, 17, 19,           // Next Primary, Prev Primary, Next Secondary, Prev Secondary
+	2, 3, 4, 5, 6,            // Fire Flare .. Toggle Cockpit
 	7, 14, 15,                // Slide On, Slide Up, Slide Down
 	8, 9, 10, 11, 12, 13      // Bank On, Drop Bomb, Automap, Cruise Faster/Slower/Off
 };
