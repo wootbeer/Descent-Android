@@ -1091,7 +1091,7 @@ void hud_show_weapons(void)
 #endif
 
 	strcat(weapon_str, " ");
-	sprintf(weapon_str, "%s%d", weapon_str, Players[Player_num].secondary_ammo[Secondary_weapon]);
+	sprintf(weapon_str + strlen(weapon_str), "%d", Players[Player_num].secondary_ammo[Secondary_weapon]);
 	gr_get_string_size(weapon_str, &w, &h, &aw );
 	w *= f2fl(Scale_factor);
 	gr_scale_printf(grd_curcanv->cv_w-5-w, y, Scale_factor, Scale_factor, weapon_str);

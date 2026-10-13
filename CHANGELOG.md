@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5 (10-13-2026)]
+
+### Added
+- Typing paths for devices without a system file picker (Android TV)  
+- Accelerate / Reverse bindable (triggers by default)  
+
+### Fixed
+- Mission end text after timer runs out  
+- Menu flashing in Mali devices  
+
 ## [0.4 (10-9-2026)]
 
 ### Added

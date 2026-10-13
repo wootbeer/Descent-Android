@@ -646,7 +646,11 @@ void write_game_text_file(char *filename)
 
 	// mprintf((0, "Writing text file [%s]\n", my_filename));
 	
-	sprintf(my_filename, "%s/%s", Document_path, my_filename);
+	{
+		char tmp_filename[FILENAME_MAX];
+		strcpy(tmp_filename, my_filename);
+		sprintf(my_filename, "%s/%s", Document_path, tmp_filename);
+	}
 	my_file = fopen( my_filename, "wt" );
 
 	if (!my_file)	{

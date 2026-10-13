@@ -1214,6 +1214,10 @@ void do_briefing_screens(int level_num)
 
 	free(Briefing_text);
 
+	//the briefing screens leave gr_current_pal as their own (faded) palette; put the game palette back
+	//so GL textures created next (menus, fonts, the level) aren't built from the wrong one
+	gr_palette_load(gr_palette);
+
 	key_flush();
 }
 

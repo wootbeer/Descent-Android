@@ -611,7 +611,19 @@ void nm_draw_background(int x1, int y1, int x2, int y2 )
 		{ i2f(x2), i2f(y2)}
 	};
 
+#ifdef OGLES
+	// the cached GL copy is built from gr_current_pal on first draw; nm_background is remapped to the
+	// master palette, so make sure that is what it is built from
+	{
+		extern void gr_palette_push_master(void);
+		extern void gr_palette_pop_master(void);
+		gr_palette_push_master();
+		scale_bitmap(&nm_background, scale_vec);
+		gr_palette_pop_master();
+	}
+#else
 	scale_bitmap(&nm_background, scale_vec);
+#endif
 
 	Gr_scanline_darkening_level = 2*7;
 
@@ -834,9 +846,9 @@ void draw_item( bkg * b, newmenu_item *item, int is_current )
 		if (item->value > item->max_value) item->value=item->max_value;
 		sprintf( item->saved_text, "%s\t%s", item->text, SLIDER_LEFT );
 		for (j=0; j<(item->max_value-item->min_value+1); j++ )	{
-			sprintf( item->saved_text, "%s%s", item->saved_text,SLIDER_MIDDLE );
+			strcat( item->saved_text, SLIDER_MIDDLE );
 		}
-		sprintf( item->saved_text, "%s%s", item->saved_text,SLIDER_RIGHT );
+		strcat( item->saved_text, SLIDER_RIGHT );
 		
 		item->saved_text[item->value+1+strlen(item->text)+1] = SLIDER_MARKER[0];
 		
@@ -1063,9 +1075,9 @@ int newmenu_do3( char * title, char * subtitle, int nitems, newmenu_item * item,
 			nothers++;
 			sprintf( item[i].saved_text, "%s", SLIDER_LEFT );
 			for (j=0; j<(item[i].max_value-item[i].min_value+1); j++ )	{
-				sprintf( item[i].saved_text, "%s%s", item[i].saved_text,SLIDER_MIDDLE );
+				strcat( item[i].saved_text, SLIDER_MIDDLE );
 			}
-			sprintf( item[i].saved_text, "%s%s", item[i].saved_text,SLIDER_RIGHT );
+			strcat( item[i].saved_text, SLIDER_RIGHT );
 			gr_get_string_size(item[i].saved_text,&w1,&h1,&aw1 );
 			w1 *= f2fl(Scale_factor);
 			string_width += w1 + aw;

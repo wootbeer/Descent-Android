@@ -275,13 +275,16 @@ static char rcsid[] = "$Id: playsave.c 2.3 1995/05/26 16:16:23 john Exp $";
 // the previous release (which only has 7 shorts there), silently discarding those 7 good
 // bindings back to defaults.
 // GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS
-// + GAMEPAD_REMAP_NUM_NEWEST_ACTIONS must equal gamepad_remap.c's GP_NUM_ACTIONS (20) -- no shared header ties these together,
+// + GAMEPAD_REMAP_NUM_NEWEST_ACTIONS + GAMEPAD_REMAP_NUM_LATEST_ACTIONS must equal gamepad_remap.c's GP_NUM_ACTIONS (22) -- no shared header ties these together,
 // so keep them in sync by hand.
 #define GAMEPAD_REMAP_NUM_NEWER_ACTIONS 2
 // The weapon-cycling actions (Next Primary, Next Secondary, Prev Primary, Prev Secondary) --
 // Gamepad_bound_keycodes[16..19]. FOURTH independent trailing field, same reason as the two
 // batches above: it must not resize a field already present in shipped saves.
 #define GAMEPAD_REMAP_NUM_NEWEST_ACTIONS 4
+// The thrust actions (Accelerate, Reverse) -- Gamepad_bound_keycodes[20..21]. FIFTH independent
+// trailing field, for the same reason as the batches above.
+#define GAMEPAD_REMAP_NUM_LATEST_ACTIONS 2
 // No fixed bound here -- the real array (gamepad_remap.c) is GAMEPAD_REMAP_NUM_ACTIONS +
 // GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS long; every access below
 // already uses an explicit index range, so leaving this unsized avoids yet another count
@@ -625,6 +628,15 @@ int read_player_file()
 								if (fread(newest_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEWEST_ACTIONS, file) == GAMEPAD_REMAP_NUM_NEWEST_ACTIONS) {
 									for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEWEST_ACTIONS; gi++)
 										Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS + gi] = newest_gamepad_keycodes[gi];
+
+									// Thrust actions -- fifth trailing field, tolerant of being absent.
+									{
+										short latest_gamepad_keycodes[GAMEPAD_REMAP_NUM_LATEST_ACTIONS];
+										if (fread(latest_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_LATEST_ACTIONS, file) == GAMEPAD_REMAP_NUM_LATEST_ACTIONS) {
+											for (gi = 0; gi < GAMEPAD_REMAP_NUM_LATEST_ACTIONS; gi++)
+												Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS + GAMEPAD_REMAP_NUM_NEWEST_ACTIONS + gi] = latest_gamepad_keycodes[gi];
+										}
+									}
 								}
 							}
 						}
@@ -802,6 +814,7 @@ int write_player_file()
 		short new_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEW_ACTIONS];
 		short newer_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEWER_ACTIONS];
 		short newest_gamepad_keycodes[GAMEPAD_REMAP_NUM_NEWEST_ACTIONS];
+		short latest_gamepad_keycodes[GAMEPAD_REMAP_NUM_LATEST_ACTIONS];
 		ubyte stick_layout = (ubyte) Gamepad_stick_layout;
 		ubyte invert_y = (ubyte) Config_invert_y;
 		ubyte touch_scale = Config_touch_control_scale;
@@ -815,6 +828,8 @@ int write_player_file()
 			newer_gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + gi];
 		for (gi = 0; gi < GAMEPAD_REMAP_NUM_NEWEST_ACTIONS; gi++)
 			newest_gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS + gi];
+		for (gi = 0; gi < GAMEPAD_REMAP_NUM_LATEST_ACTIONS; gi++)
+			latest_gamepad_keycodes[gi] = (short) Gamepad_bound_keycodes[GAMEPAD_REMAP_NUM_ACTIONS + GAMEPAD_REMAP_NUM_NEW_ACTIONS + GAMEPAD_REMAP_NUM_NEWER_ACTIONS + GAMEPAD_REMAP_NUM_NEWEST_ACTIONS + gi];
 
 		if (fwrite( kconfig_settings, MAX_CONTROLS*CONTROL_MAX_TYPES, 1, file )!=1)
 			errno_ret=errno;
@@ -841,6 +856,9 @@ int write_player_file()
 			errno_ret=errno;
 		// Weapon-cycling actions -- fourth trailing field.
 		else if (fwrite( newest_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_NEWEST_ACTIONS, file ) != GAMEPAD_REMAP_NUM_NEWEST_ACTIONS)
+			errno_ret=errno;
+		// Thrust actions -- fifth trailing field.
+		else if (fwrite( latest_gamepad_keycodes, sizeof(short), GAMEPAD_REMAP_NUM_LATEST_ACTIONS, file ) != GAMEPAD_REMAP_NUM_LATEST_ACTIONS)
 			errno_ret=errno;
 	}
 

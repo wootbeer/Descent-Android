@@ -4,6 +4,10 @@
 	package="wootbeer.descent"
 	android:installLocation="auto">
 
+	<!-- Only used by the typed-folder import on devices with no system folder picker (Android TV) -->
+	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+	<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
+
 	<application
 		android:allowBackup="false"
 		android:icon="@mipmap/ic_launcher"

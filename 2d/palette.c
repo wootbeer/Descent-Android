@@ -198,6 +198,32 @@ void gr_palette_apply(ubyte *palette) {
 	memcpy(gr_current_pal, palette, 256*3);
 }
 
+// OGLES builds GL textures from the 8-bit game data using gr_current_pal at creation time and then
+// caches them. Menu backgrounds and font glyphs are remapped to the master palette, so if one is first
+// created while gr_current_pal is something else (briefing palette, faded/flashed state) it comes out
+// as noise and stays that way. These make gr_current_pal the (gamma-adjusted) master palette for the
+// duration of such a texture build, then put it back.
+static ubyte gr_pal_pushed[256*3];
+static int gr_pal_push_depth = 0;
+
+void gr_palette_push_master(void)
+{
+	int i;
+	if (gr_pal_push_depth++ > 0) return;
+	memcpy(gr_pal_pushed, gr_current_pal, 256*3);
+	for (i = 0; i < 768; i++) {
+		int c = gr_palette[i] + gr_palette_gamma;
+		gr_current_pal[i] = c > 63 ? 63 : c;
+	}
+}
+
+void gr_palette_pop_master(void)
+{
+	if (gr_pal_push_depth <= 0) return;
+	if (--gr_pal_push_depth > 0) return;
+	memcpy(gr_current_pal, gr_pal_pushed, 256*3);
+}
+
 void gr_palette_load(ubyte * pal)
 {
 	int i;

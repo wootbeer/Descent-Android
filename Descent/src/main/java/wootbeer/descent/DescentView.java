@@ -344,8 +344,10 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				slideUpDown = updateDigitalAxis(slideUpDown, !menuOpen && ry < -STICK_DEADZONE, (char) 0x4A);      // KEY_PADMINUS
 				slideDownDown = updateDigitalAxis(slideDownDown, !menuOpen && ry > STICK_DEADZONE, (char) 0x4E);   // KEY_PADPLUS
 
-				thrustForwardDown = updateDigitalAxis(thrustForwardDown, !menuOpen && rt > TRIGGER_DEADZONE, (char) 0x1E); // KEY_A
-				thrustReverseDown = updateDigitalAxis(thrustReverseDown, !menuOpen && lt > TRIGGER_DEADZONE, (char) 0x2C); // KEY_Z
+				// The triggers are the default for thrust, but once Accelerate/Reverse is bound to a
+				// button in Remap Gamepad the trigger stops doing it (so it can be used for something else).
+				thrustForwardDown = updateDigitalAxis(thrustForwardDown, !menuOpen && rt > TRIGGER_DEADZONE && !gamepadActionBound(GP_ACTION_ACCELERATE), (char) 0x1E); // KEY_A
+				thrustReverseDown = updateDigitalAxis(thrustReverseDown, !menuOpen && lt > TRIGGER_DEADZONE && !gamepadActionBound(GP_ACTION_REVERSE), (char) 0x2C); // KEY_Z
 			} else {
 				// Modern: left stick is dedicated fully to movement (strafe left/right on
 				// its X axis, forward/reverse thrust on its Y axis -- up = forward, down =
@@ -1131,6 +1133,10 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 
 	// True if this key code is bound to an action in Remap Gamepad, or the remap screen is open.
 	private static native boolean gamepadKeyBound(int keyCode);
+	private static native boolean gamepadActionBound(int action);
+	// Indices into Gamepad_remap_actions[] in gamepad_remap.c -- keep in sync.
+	private static final int GP_ACTION_ACCELERATE = 20;
+	private static final int GP_ACTION_REVERSE = 21;
 
 	private static native void descentMain(int w, int h, Context activity,
 										   DescentView descentView,

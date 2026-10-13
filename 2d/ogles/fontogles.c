@@ -17,6 +17,8 @@
 
 // Used in hack to guarantee whiteness in font texture
 extern ubyte gr_current_pal[256*3];
+extern void gr_palette_push_master(void);
+extern void gr_palette_pop_master(void);
 
 extern ubyte *gr_bitblt_fade_table;
 extern int get_centered_x_scaled(char *s, fix scale_x);
@@ -79,6 +81,10 @@ void gr_scale_string_ogles(int x, int y, fix scale_x, fix scale_y, unsigned char
 			gr_bitblt_fade_table = fade_table_save;
 			gr_set_current_canvas(save_canv);
 			
+			// Glyph pixels are master-palette indices; build the texture from the master palette
+			// whatever gr_current_pal currently holds (briefing, fade, flash)
+			gr_palette_push_master();
+
 			// Save off first 3 bytes of the palette and set it to white
 			memcpy(pal_save, gr_current_pal, sizeof(ubyte) * 3);
 			memset(gr_current_pal, 63, 3);
@@ -87,6 +93,7 @@ void gr_scale_string_ogles(int x, int y, fix scale_x, fix scale_y, unsigned char
 			
 			// Restore first 3 bytes of palette
 			memcpy(gr_current_pal, pal_save, sizeof(ubyte) * 3);
+			gr_palette_pop_master();
 			
 			grd_curcanv->cv_font->ft_ogles_texes[*s - grd_curcanv->cv_font->ft_minchar] = temp_canv->cv_bitmap.bm_ogles_tex_id;
 			free(temp_canv->cv_bitmap.bm_data);

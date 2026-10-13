@@ -1,5 +1,5 @@
 //
-// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (20) gameplay actions to
+// Remap Gamepad -- lets the player rebind GP_NUM_ACTIONS (22) gameplay actions to
 // gamepad buttons: the original 7 (Fire Primary/Secondary/Flare, Rear View, Bank
 // Left/Right, Toggle Cockpit) plus Slide On, Bank On, Drop Bomb, Automap, Cruise
 // Faster/Slower/Off, Slide Up and Slide Down -- plus a "Stick Layout" option (Standard/Modern) that changes
@@ -63,7 +63,7 @@
 #define GP_TRIGGER_LT 1001
 #define GP_TRIGGER_RT 1002
 
-#define GP_NUM_ACTIONS 20
+#define GP_NUM_ACTIONS 22
 #define GP_UNBOUND (-1)
 
 typedef struct GamepadRemapAction {
@@ -118,6 +118,8 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 	{ "Next Secondary", KEY_6,        GP_UNBOUND },   // game.c: cycles the secondary weapon forward
 	{ "Prev Primary",   KEY_LBRACKET, GP_UNBOUND },   // game.c: cycles the primary weapon backward
 	{ "Prev Secondary", KEY_RBRACKET, GP_UNBOUND },   // game.c: cycles the secondary weapon backward
+	{ "Accelerate",     KEY_A,        GP_UNBOUND },   // forward thrust; unbound = the layout's own default (Standard: RT)
+	{ "Reverse",        KEY_Z,        GP_UNBOUND },   // reverse thrust; unbound = the layout's own default (Standard: LT)
 };
 
 // Live, persisted bindings -- consulted every time a gamepad button event arrives.
@@ -127,7 +129,8 @@ static const GamepadRemapAction Gamepad_remap_actions[GP_NUM_ACTIONS] = {
 int Gamepad_bound_keycodes[GP_NUM_ACTIONS] = {
 	GP_BUTTON_A, GP_BUTTON_B, GP_BUTTON_X, GP_BUTTON_Y, GP_BUTTON_L1, GP_BUTTON_R1, GP_BUTTON_THUMBL,
 	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND,
-	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND
+	GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND, GP_UNBOUND,
+	GP_UNBOUND, GP_UNBOUND
 };
 
 // Which physical inputs drive which analog functions:
@@ -193,6 +196,17 @@ JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_gamepadButtonRaw(JNIEnv
 			key_handler(Gamepad_remap_actions[i].scancode, down);
 		}
 	}
+}
+
+// True if the given action (an index into Gamepad_remap_actions) has a button bound to it.
+// DescentView.java uses this for Accelerate/Reverse: while one of them is unbound the Standard
+// layout's triggers keep driving thrust, but once it's bound the trigger no longer does it
+// (otherwise the trigger could never be freed up for something else).
+JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_gamepadActionBound(JNIEnv *env, jclass type, jint action) {
+	if (action < 0 || action >= GP_NUM_ACTIONS) {
+		return JNI_FALSE;
+	}
+	return Gamepad_bound_keycodes[action] != GP_UNBOUND ? JNI_TRUE : JNI_FALSE;
 }
 
 // True if keyCode is bound to any action, or the Remap Gamepad screen is open (so it can
@@ -326,6 +340,7 @@ static int gamepad_remap_poll_confirm(void) {
 static const int Gamepad_remap_display_order[GP_NUM_ACTIONS] = {
 	0, 1,                    // Fire Primary, Fire Secondary
 	16, 18, 17, 19,           // Next Primary, Prev Primary, Next Secondary, Prev Secondary
+	20, 21,                   // Accelerate, Reverse
 	2, 3, 4, 5, 6,            // Fire Flare .. Toggle Cockpit
 	7, 14, 15,                // Slide On, Slide Up, Slide Down
 	8, 9, 10, 11, 12, 13      // Bank On, Drop Bomb, Automap, Cruise Faster/Slower/Off
@@ -398,7 +413,15 @@ static void gamepad_remap_draw_row(int row, int staging[GP_NUM_ACTIONS], int sta
 		strncpy(rtext, staging_layout ? "Modern" : "Standard", sizeof(rtext) - 1);
 		rtext[sizeof(rtext) - 1] = '\0';
 	} else if (row >= GP_ACTIONS_START && row <= GP_NUM_ACTIONS) {
-		strncpy(rtext, gamepad_remap_bound_name(staging[GP_ACTION_AT_ROW(row)]), sizeof(rtext) - 1);
+		int action = GP_ACTION_AT_ROW(row);
+		const char *bound = gamepad_remap_bound_name(staging[action]);
+		// Accelerate/Reverse are never really "nothing": while unbound the stick layout drives
+		// them (Standard: triggers, Modern: left stick). Say so instead of showing "---".
+		if (staging[action] == GP_UNBOUND && action == 20)
+			bound = staging_layout ? "L Stick" : "RT (default)";
+		else if (staging[action] == GP_UNBOUND && action == 21)
+			bound = staging_layout ? "L Stick" : "LT (default)";
+		strncpy(rtext, bound, sizeof(rtext) - 1);
 		rtext[sizeof(rtext) - 1] = '\0';
 	} else {
 		return;   // Reset/Cancel/Apply have no right-hand value to draw.
@@ -770,7 +793,8 @@ void do_remap_gamepad_menu(void) {
 			// Not a "press a button" row -- confirming it just cycles between the two
 			// layouts in place, same as flipping a checkbox elsewhere in the game.
 			staging_layout = !staging_layout;
-			gamepad_remap_draw_row(citem, staging, staging_layout, 1);
+			// Accelerate/Reverse rows show the layout's default while unbound, so repaint them too.
+			gamepad_remap_draw_visible(scroll, visible_rows, staging, staging_layout, citem);
 			continue;
 		}
 

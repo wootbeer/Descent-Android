@@ -47,20 +47,62 @@ void getRenderBufferSize(GLint *width, GLint *height) {
 // Asks EGL to keep the previous frame's contents across eglSwapBuffers() -- the game depends on
 // that (menus/briefings/fades read back the frame that was just presented, see
 // ogles_save_screen()). Logs what the driver actually did, since some GPUs/drivers refuse.
+// Some drivers accept EGL_BUFFER_PRESERVED and even report it back, yet still hand out a stale
+// back buffer after eglSwapBuffers() (seen as menus flashing between two frames). So don't trust
+// the query: present two nearly-black test frames and check that the pixel we drew is still in the
+// back buffer right after each swap. Returns 1 only if the contents really survived both swaps.
+static int verify_preserved_swap(EGLDisplay display, EGLSurface surface) {
+	static const GLubyte colors[2][3] = { {24, 8, 40}, {8, 40, 16} };
+	GLint w, h;
+	int i, j, ok = 1;
+
+	getRenderBufferSize(&w, &h);
+	if (w <= 0 || h <= 0) {
+		return 1;   // can't test; keep what the driver claims
+	}
+	glDisable(GL_SCISSOR_TEST);
+	for (i = 0; i < 2 && ok; i++) {
+		GLubyte px[4] = {0, 0, 0, 0};
+		glClearColor(colors[i][0] / 255.0f, colors[i][1] / 255.0f, colors[i][2] / 255.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		eglSwapBuffers(display, surface);
+		glReadPixels(w / 2, h / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+		for (j = 0; j < 3; j++) {
+			int d = (int) px[j] - (int) colors[i][j];
+			if (d < -10 || d > 10) {
+				ok = 0;
+			}
+		}
+	}
+	glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+	return ok;
+}
+
 void setPreservedSwapBehavior() {
 	EGLDisplay display = eglGetCurrentDisplay();
 	EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
 	EGLint behavior = 0;
 	EGLBoolean ok = eglSurfaceAttrib(display, surface, EGL_SWAP_BEHAVIOR, EGL_BUFFER_PRESERVED);
 	EGLint err = ok ? EGL_SUCCESS : eglGetError();
+	int verified = 1;
 	eglQuerySurface(display, surface, EGL_SWAP_BEHAVIOR, &behavior);
 	Swap_preserved = (ok && behavior == EGL_BUFFER_PRESERVED);
+	if (Swap_preserved) {
+		verified = verify_preserved_swap(display, surface);
+		if (!verified) {
+			Swap_preserved = 0;
+		}
+	}
 	Last_frame_tex = 0;   // belongs to the previous context, if any
 	Last_frame_w = Last_frame_h = 0;
 	__android_log_print(ANDROID_LOG_INFO, "DescentGL",
 						"preserved swap: request %s (error 0x%x), surface behavior now %s",
 						ok ? "accepted" : "REFUSED", (unsigned) err,
 						behavior == EGL_BUFFER_PRESERVED ? "PRESERVED" : "DESTROYED");
+	if (!verified) {
+		__android_log_print(ANDROID_LOG_INFO, "DescentGL",
+							"preserved swap: driver claims PRESERVED but the back buffer did not survive a swap; emulating it");
+	}
 }
 
 // Emulates EGL_BUFFER_PRESERVED on drivers that won't do it: after each swap the new back
