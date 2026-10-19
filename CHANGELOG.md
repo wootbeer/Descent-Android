@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6 (10-19-2026)]
+
+### Fixed
+- Android TV: folder path screen. added a Type Folder Path button  
+
 ## [0.5 (10-13-2026)]
 
 ### Added

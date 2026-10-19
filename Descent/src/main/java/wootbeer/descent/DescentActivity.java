@@ -6,6 +6,8 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -338,6 +340,18 @@ public class DescentActivity extends Activity implements SensorEventListener {
 		});
 		layout.addView(chooseButton);
 
+		// Always offer the typed-path route too, in case the device's picker is missing or broken
+		// in a way we can't detect (e.g. it opens but only shows an error).
+		Button typeButton = new Button(this);
+		typeButton.setText("Type Folder Path");
+		typeButton.setOnClickListener(new View.OnClickListener() {
+			@Override
+			public void onClick(View v) {
+				showTypedFolderDialog(true);
+			}
+		});
+		layout.addView(typeButton);
+
 		setContentView(layout);
 	}
 
@@ -366,6 +380,10 @@ public class DescentActivity extends Activity implements SensorEventListener {
 					"bundled assets instead.");
 			return;
 		}
+		if (!hasUsableFolderPicker()) {
+			showTypedFolderDialog(true);
+			return;
+		}
 		try {
 			Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
 			startActivityForResult(intent, REQUEST_CODE_OPEN_DATA_FOLDER);
@@ -376,6 +394,30 @@ public class DescentActivity extends Activity implements SensorEventListener {
 	}
 
 	// --- Fallback for devices without a system folder picker (Android TV) -------------------
+
+	/**
+	 * True if ACTION_OPEN_DOCUMENT_TREE opens a real folder picker. Android TV / Google TV
+	 * builds often have no picker but do have a "framework package stubs" app that claims the
+	 * intent and only shows "You don't have an app for that" -- so no ActivityNotFoundException
+	 * is thrown. Treat no handler, or only a stub handler, as no picker.
+	 */
+	private boolean hasUsableFolderPicker() {
+		try {
+			Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+			ResolveInfo ri = getPackageManager().resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY);
+			if (ri == null || ri.activityInfo == null) {
+				return false;
+			}
+			String pkg = ri.activityInfo.packageName;
+			if (pkg != null && pkg.toLowerCase(Locale.US).contains("stub")) {
+				android.util.Log.i("Descent", "Folder picker intent goes to stub " + pkg + "; using typed path");
+				return false;
+			}
+		} catch (RuntimeException e) {
+			// Can't tell -- let the normal launch (and its ActivityNotFoundException fallback) decide.
+		}
+		return true;
+	}
 
 	/**
 	 * Asks for a folder path to import from. firstRun: import the base game data (otherwise
@@ -674,6 +716,10 @@ public class DescentActivity extends Activity implements SensorEventListener {
 				if (Build.VERSION.SDK_INT < 21) {
 					Toast.makeText(DescentActivity.this,
 							"This Android version can't select external files.", Toast.LENGTH_LONG).show();
+					return;
+				}
+				if (!hasUsableFolderPicker()) {
+					showTypedFolderDialog(false);
 					return;
 				}
 				try {
