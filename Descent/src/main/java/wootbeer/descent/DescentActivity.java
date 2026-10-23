@@ -22,6 +22,8 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Process;
 import android.provider.DocumentsContract;
 import android.provider.Settings;
@@ -40,12 +42,14 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 import android.widget.TextView;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -179,6 +183,15 @@ public class DescentActivity extends Activity implements SensorEventListener {
 
 		descentView = new DescentView(this, RENDER_SCALE_OPTIONS[getRenderScaleIndex()], quickResume);
 
+		// Save the game's own log lines to a file a few seconds in (and again on every pause), so
+		// a user with no adb access -- an Android TV, say -- can still send them along.
+		new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+			@Override
+			public void run() {
+				dumpDiagnosticsLog();
+			}
+		}, 12000);
+
 		if (getAspectRatio43()) {
 			// Give the SurfaceView a genuine 4:3 shape instead of letting it fill the whole
 			// screen, and center it over a black background -- the rest of the screen (the
@@ -293,6 +306,76 @@ public class DescentActivity extends Activity implements SensorEventListener {
 		// goes straight from native code to exit(0) with no Activity lifecycle involved (see
 		// main/inferno.c). Killing the process directly here is consistent with that.
 		Process.killProcess(Process.myPid());
+	}
+
+	// --- Diagnostics log ---------------------------------------------------------------------
+
+	/**
+	 * Writes this app's own log lines (graphics setup, input, crashes) plus basic device info to
+	 * descent-log.txt in the app's external files folder, and also to Download/Descent-log.txt
+	 * when the app has storage access. Runs on a background thread and never throws. The app's
+	 * own process log can be read without any special permission.
+	 */
+	private void dumpDiagnosticsLog() {
+		new Thread(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					StringBuilder sb = new StringBuilder();
+					String version = "?";
+					try {
+						version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+					} catch (Exception ignored) {
+					}
+					sb.append("Descent ").append(version).append(" | ").append(Build.MANUFACTURER).append(' ')
+							.append(Build.MODEL).append(" | Android ").append(Build.VERSION.RELEASE)
+							.append(" (API ").append(Build.VERSION.SDK_INT).append(")\n\n");
+					java.lang.Process proc = new ProcessBuilder("logcat", "-d", "-v", "time", "-s",
+							"DescentGL:V", "Descent:V", "DescentCrash:V", "DescentInput:V", "DescentMission:V")
+							.redirectErrorStream(true).start();
+					BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
+					String line;
+					int lines = 0;
+					while ((line = reader.readLine()) != null && lines++ < 2000) {
+						sb.append(line).append('\n');
+					}
+					reader.close();
+					proc.destroy();
+					byte[] data = sb.toString().getBytes("UTF-8");
+
+					File appDir = getExternalFilesDir(null);
+					if (appDir != null) {
+						writeBytes(new File(appDir, "descent-log.txt"), data);
+					}
+					boolean allFiles = Build.VERSION.SDK_INT >= 30 ? Environment.isExternalStorageManager()
+							: Build.VERSION.SDK_INT < 23 || checkCallingOrSelfPermission("android.permission.WRITE_EXTERNAL_STORAGE") == PackageManager.PERMISSION_GRANTED;
+					if (allFiles) {
+						File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+						if (downloads != null && (downloads.isDirectory() || downloads.mkdirs())) {
+							writeBytes(new File(downloads, "Descent-log.txt"), data);
+						}
+					}
+				} catch (Exception ignored) {
+					// diagnostics only -- never let this affect the game
+				}
+			}
+		}).start();
+	}
+
+	private static void writeBytes(File file, byte[] data) {
+		FileOutputStream out = null;
+		try {
+			out = new FileOutputStream(file);
+			out.write(data);
+		} catch (IOException ignored) {
+		} finally {
+			if (out != null) {
+				try {
+					out.close();
+				} catch (IOException ignored) {
+				}
+			}
+		}
 	}
 
 	// --- User-supplied game data (Storage Access Framework) --------------------------------
@@ -896,6 +979,7 @@ public class DescentActivity extends Activity implements SensorEventListener {
 		// place -- onPause can fire earlier than that, e.g. while the SAF folder picker or
 		// the data copy is in progress.
 		if (descentView != null) {
+			dumpDiagnosticsLog();
 			descentPause();
 			mediaPlayer.pause();
 			mediaPlayerPosition = mediaPlayer.getCurrentPosition();

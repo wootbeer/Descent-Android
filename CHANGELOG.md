@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7 (10-23-2026)]
+
+### Changed
+- More graphics diagnostic logging, saved to Download/Descent-log.txt (or the app's own folder) for bug reports  
+
 ## [0.6 (10-19-2026)]
 
 ### Fixed

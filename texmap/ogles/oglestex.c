@@ -18,6 +18,9 @@
 #include "gr.h"
 #include "rle.h"
 #include "oglestex.h"
+#ifdef ANDROID_NDK
+#include <android/log.h>
+#endif
 
 extern ubyte gr_current_pal[256*3];
 
@@ -58,7 +61,22 @@ void ogles_bm_bind_teximage_2d(grs_bitmap *bm) {
 		if (bm->bm_flags & BM_FLAG_RLE) {
 			free(data);
 		}
+		glGetError();	// discard anything left over from earlier calls
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, bm->bm_w, bm->bm_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data);
+#ifdef ANDROID_NDK
+		{
+			// A texture the driver rejects renders as solid white. Log the first few so a user's
+			// logcat shows it (menu backgrounds going white on some devices).
+			static int logged_failures = 0;
+			GLenum err = glGetError();
+			if (err != GL_NO_ERROR && logged_failures < 10) {
+				logged_failures++;
+				__android_log_print(ANDROID_LOG_WARN, "DescentGL",
+									"glTexImage2D failed for %dx%d texture: error 0x%x",
+									(int) bm->bm_w, (int) bm->bm_h, (unsigned) err);
+			}
+		}
+#endif
 		free(image_data);
 	} else {
 		glBindTexture(GL_TEXTURE_2D, bm->bm_ogles_tex_id);

@@ -78,6 +78,47 @@ static int verify_preserved_swap(EGLDisplay display, EGLSurface surface) {
 	return ok;
 }
 
+// One-time dump of what this GPU/surface actually is, to the "DescentGL" log tag. Menu backgrounds
+// going white on some devices (TVs especially) can't be told apart from the outside: it might be
+// the swap behaviour, a framebuffer smaller than the game's logical screen, or textures the driver
+// won't accept, and this is what lets a user's logcat say which.
+static void log_gl_diagnostics(EGLDisplay display, EGLSurface surface) {
+	const char *renderer = (const char *) glGetString(GL_RENDERER);
+	const char *version = (const char *) glGetString(GL_VERSION);
+	const char *ext = (const char *) glGetString(GL_EXTENSIONS);
+	GLint max_tex = 0, w = 0, h = 0;
+	EGLint config_id = 0, r = 0, g = 0, b = 0, a = 0, depth = 0, surface_type = 0;
+	EGLConfig config;
+	EGLint num_config = 0;
+	EGLContext context = eglGetCurrentContext();
+
+	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+	getRenderBufferSize(&w, &h);
+	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "GL: %s | %s | max texture %d",
+						renderer ? renderer : "?", version ? version : "?", (int) max_tex);
+	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "GL extensions: npot=%d limited_npot=%d",
+						ext && strstr(ext, "GL_OES_texture_npot") ? 1 : 0,
+						ext && strstr(ext, "GL_APPLE_texture_2D_limited_npot") ? 1 : 0);
+	if (eglQueryContext(display, context, EGL_CONFIG_ID, &config_id)) {
+		EGLint attribs[] = { EGL_CONFIG_ID, config_id, EGL_NONE };
+		if (eglChooseConfig(display, attribs, &config, 1, &num_config) && num_config >= 1) {
+			eglGetConfigAttrib(display, config, EGL_RED_SIZE, &r);
+			eglGetConfigAttrib(display, config, EGL_GREEN_SIZE, &g);
+			eglGetConfigAttrib(display, config, EGL_BLUE_SIZE, &b);
+			eglGetConfigAttrib(display, config, EGL_ALPHA_SIZE, &a);
+			eglGetConfigAttrib(display, config, EGL_DEPTH_SIZE, &depth);
+			eglGetConfigAttrib(display, config, EGL_SURFACE_TYPE, &surface_type);
+		}
+	}
+	__android_log_print(ANDROID_LOG_INFO, "DescentGL",
+						"EGL surface %dx%d, game screen %dx%d, config id %d rgba %d%d%d%d depth %d surface_type 0x%x",
+						(int) w, (int) h,
+						grd_curscreen ? (int) grd_curscreen->sc_w : -1,
+						grd_curscreen ? (int) grd_curscreen->sc_h : -1,
+						(int) config_id, (int) r, (int) g, (int) b, (int) a, (int) depth,
+						(unsigned) surface_type);
+}
+
 void setPreservedSwapBehavior() {
 	EGLDisplay display = eglGetCurrentDisplay();
 	EGLSurface surface = eglGetCurrentSurface(EGL_DRAW);
@@ -103,6 +144,9 @@ void setPreservedSwapBehavior() {
 		__android_log_print(ANDROID_LOG_INFO, "DescentGL",
 							"preserved swap: driver claims PRESERVED but the back buffer did not survive a swap; emulating it");
 	}
+	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "preserved swap: using %s",
+						Swap_preserved ? "the driver's PRESERVED behavior" : "emulation");
+	log_gl_diagnostics(display, surface);
 }
 
 // Emulates EGL_BUFFER_PRESERVED on drivers that won't do it: after each swap the new back
