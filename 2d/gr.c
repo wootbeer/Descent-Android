@@ -670,6 +670,8 @@ void ogles_draw_saved_screen(GLuint saved_screen_tex) {
 	glDisableClientState(GL_TEXTURE_COORD_ARRAY);
 }
 
+static int Saved_screen_copy_fell_back = 0;
+
 GLuint ogles_save_screen() {
 	GLuint tex;
 
@@ -698,6 +700,12 @@ GLuint ogles_save_screen() {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glGetError();	// discard anything left over from earlier calls
 	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, grd_curscreen->sc_w, grd_curscreen->sc_h, 0);
+	if (glGetError() != GL_NO_ERROR) {
+		// Some framebuffer formats (e.g. 10-10-10-2 on a Mali TV) can't be copied into an RGB
+		// texture, which left this texture empty (solid white). Try RGBA instead.
+		glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, grd_curscreen->sc_w, grd_curscreen->sc_h, 0);
+		Saved_screen_copy_fell_back = 1;
+	}
 #ifdef ANDROID_NDK
 	{
 		// A saved-screen texture that comes out white is how menu backgrounds fail on some devices;
@@ -711,8 +719,9 @@ GLuint ogles_save_screen() {
 			getRenderBufferSize(&fb_w, &fb_h);
 			if (logged_copies < 10) {
 				logged_copies++;
-				diag_log("saved screen: copied %dx%d, framebuffer %dx%d, GL error 0x%x",
-						 (int) grd_curscreen->sc_w, (int) grd_curscreen->sc_h, (int) fb_w, (int) fb_h, (unsigned) err);
+				diag_log("saved screen: copied %dx%d, framebuffer %dx%d, GL error 0x%x%s",
+						 (int) grd_curscreen->sc_w, (int) grd_curscreen->sc_h, (int) fb_w, (int) fb_h, (unsigned) err,
+						 Saved_screen_copy_fell_back ? " (RGB copy was rejected, used RGBA)" : "");
 			}
 		}
 	}

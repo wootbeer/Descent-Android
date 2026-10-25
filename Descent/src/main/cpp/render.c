@@ -194,7 +194,12 @@ static void emulate_preserved_before_swap(void) {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glGetError();
 		glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, w, h, 0);
+		if (glGetError() != GL_NO_ERROR) {
+			// framebuffer formats like 10-10-10-2 can't be copied into RGB; use RGBA
+			glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, w, h, 0);
+		}
 		Last_frame_w = w;
 		Last_frame_h = h;
 	} else {

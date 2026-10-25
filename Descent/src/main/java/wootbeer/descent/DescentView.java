@@ -937,6 +937,14 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	 * before this ran) it cleans up whatever it created and returns with no current context;
 	 * native showRenderBuffer() checks for that and retries once the surface is valid again.
 	 */
+	/** True if the config's red, green and blue channels are all exactly 8 bits. */
+	private static boolean isEightBitRgb(EGL10 egl, EGLDisplay display, EGLConfig config) {
+		int[] v = new int[1];
+		return egl.eglGetConfigAttrib(display, config, EGL10.EGL_RED_SIZE, v) && v[0] == 8
+				&& egl.eglGetConfigAttrib(display, config, EGL10.EGL_GREEN_SIZE, v) && v[0] == 8
+				&& egl.eglGetConfigAttrib(display, config, EGL10.EGL_BLUE_SIZE, v) && v[0] == 8;
+	}
+
 	private void initEgl() {
 		int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
 		int[] num_config = new int[1];
@@ -1062,6 +1070,44 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				android.util.Log.i("DescentGL", "Using a config with preserved-swap support");
 			} else {
 				android.util.Log.w("DescentGL", "No EGL config advertises preserved swap");
+			}
+		}
+		// eglChooseConfig() sorts configs with more colour bits first, so a GPU that offers a
+		// 10-10-10-2 config (the Mali in a Hisense TV does) hands that one back even though 8-bit
+		// was asked for. The saved-screen copies the menus depend on (glCopyTexImage2D() into an
+		// RGB texture) are then rejected with GL_INVALID_OPERATION and every menu background
+		// comes out solid white. So if the pick isn't plain 8-bit RGB, look through the rest for
+		// one that is -- preferring one that also supports preserved swap -- and only keep the
+		// original pick if there's no such config.
+		if (num_config[0] >= 1 && configs[0] != null && !isEightBitRgb(egl, eglDisplay, configs[0])) {
+			EGLConfig[] all = new EGLConfig[64];
+			int[] numAll = new int[1];
+			if (egl.eglChooseConfig(eglDisplay, configSpec, all, all.length, numAll)) {
+				EGLConfig eightBitPreserved = null;
+				EGLConfig eightBit = null;
+				for (int i = 0; i < numAll[0] && eightBitPreserved == null; i++) {
+					EGLConfig c = all[i];
+					if (c == null || !isEightBitRgb(egl, eglDisplay, c)) {
+						continue;
+					}
+					int[] st = new int[1];
+					if (!egl.eglGetConfigAttrib(eglDisplay, c, EGL_SURFACE_TYPE, st) || (st[0] & 0x0004) == 0) {
+						continue;	// must be usable with a window surface
+					}
+					if ((st[0] & EGL_SWAP_BEHAVIOR_PRESERVED_BIT) != 0) {
+						eightBitPreserved = c;
+					} else if (eightBit == null) {
+						eightBit = c;
+					}
+				}
+				EGLConfig better = eightBitPreserved != null ? eightBitPreserved : eightBit;
+				if (better != null) {
+					configs[0] = better;
+					android.util.Log.i("DescentGL", "Picked an 8-bit RGB config instead of the default pick"
+							+ (eightBitPreserved != null ? " (with preserved swap)" : " (no preserved swap)"));
+				} else {
+					android.util.Log.w("DescentGL", "No 8-bit RGB EGL config found; keeping the default pick");
+				}
 			}
 		}
 		eglConfig = configs[0];

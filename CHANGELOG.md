@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9 (10-25-2026)]
+
+### Fixed
+- White menu backgrounds on some Mali TVs (wrong screen format picked)  
+
 ## [0.8 (10-25-2026)]
 
 ### Fixed
