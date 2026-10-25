@@ -7,6 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <android/log.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include "game.h"
 #include "gamefont.h"
 #include "texmerge.h"
@@ -33,6 +35,33 @@ static int Swap_preserved = 1;
 // Emulation state for Swap_preserved == 0: a copy of the frame that was just presented.
 static GLuint Last_frame_tex = 0;
 static GLint Last_frame_w = 0, Last_frame_h = 0;
+
+extern const char *Document_path;
+
+// Logs to logcat (tag "DescentGL") AND appends the line to <app files dir>/gl-diag.txt. Some devices
+// (a Hisense TV was the first) give the app nothing back when it reads its own logcat, so
+// DescentActivity.dumpDiagnosticsLog() copies this file into the log file users send in instead.
+// The file is started fresh the first time this runs in each launch.
+void diag_log(const char *fmt, ...) {
+	static int started = 0;
+	char line[512];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(line, sizeof(line), fmt, args);
+	va_end(args);
+	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "%s", line);
+	if (Document_path) {
+		char path[600];
+		FILE *f;
+		snprintf(path, sizeof(path), "%s/gl-diag.txt", Document_path);
+		f = fopen(path, started ? "a" : "w");
+		if (f) {
+			started = 1;
+			fprintf(f, "%s\n", line);
+			fclose(f);
+		}
+	}
+}
 
 extern void draw_buttons();
 extern void digi_close_digi();
@@ -94,11 +123,11 @@ static void log_gl_diagnostics(EGLDisplay display, EGLSurface surface) {
 
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
 	getRenderBufferSize(&w, &h);
-	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "GL: %s | %s | max texture %d",
-						renderer ? renderer : "?", version ? version : "?", (int) max_tex);
-	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "GL extensions: npot=%d limited_npot=%d",
-						ext && strstr(ext, "GL_OES_texture_npot") ? 1 : 0,
-						ext && strstr(ext, "GL_APPLE_texture_2D_limited_npot") ? 1 : 0);
+	diag_log("GL: %s | %s | max texture %d",
+			renderer ? renderer : "?", version ? version : "?", (int) max_tex);
+	diag_log("GL extensions: npot=%d limited_npot=%d",
+			ext && strstr(ext, "GL_OES_texture_npot") ? 1 : 0,
+			ext && strstr(ext, "GL_APPLE_texture_2D_limited_npot") ? 1 : 0);
 	if (eglQueryContext(display, context, EGL_CONFIG_ID, &config_id)) {
 		EGLint attribs[] = { EGL_CONFIG_ID, config_id, EGL_NONE };
 		if (eglChooseConfig(display, attribs, &config, 1, &num_config) && num_config >= 1) {
@@ -110,13 +139,12 @@ static void log_gl_diagnostics(EGLDisplay display, EGLSurface surface) {
 			eglGetConfigAttrib(display, config, EGL_SURFACE_TYPE, &surface_type);
 		}
 	}
-	__android_log_print(ANDROID_LOG_INFO, "DescentGL",
-						"EGL surface %dx%d, game screen %dx%d, config id %d rgba %d%d%d%d depth %d surface_type 0x%x",
-						(int) w, (int) h,
-						grd_curscreen ? (int) grd_curscreen->sc_w : -1,
-						grd_curscreen ? (int) grd_curscreen->sc_h : -1,
-						(int) config_id, (int) r, (int) g, (int) b, (int) a, (int) depth,
-						(unsigned) surface_type);
+	diag_log("EGL surface %dx%d, game screen %dx%d, config id %d rgba %d%d%d%d depth %d surface_type 0x%x",
+			 (int) w, (int) h,
+			 grd_curscreen ? (int) grd_curscreen->sc_w : -1,
+			 grd_curscreen ? (int) grd_curscreen->sc_h : -1,
+			 (int) config_id, (int) r, (int) g, (int) b, (int) a, (int) depth,
+			 (unsigned) surface_type);
 }
 
 void setPreservedSwapBehavior() {
@@ -136,16 +164,13 @@ void setPreservedSwapBehavior() {
 	}
 	Last_frame_tex = 0;   // belongs to the previous context, if any
 	Last_frame_w = Last_frame_h = 0;
-	__android_log_print(ANDROID_LOG_INFO, "DescentGL",
-						"preserved swap: request %s (error 0x%x), surface behavior now %s",
-						ok ? "accepted" : "REFUSED", (unsigned) err,
-						behavior == EGL_BUFFER_PRESERVED ? "PRESERVED" : "DESTROYED");
+	diag_log("preserved swap: request %s (error 0x%x), surface behavior now %s",
+			 ok ? "accepted" : "REFUSED", (unsigned) err,
+			 behavior == EGL_BUFFER_PRESERVED ? "PRESERVED" : "DESTROYED");
 	if (!verified) {
-		__android_log_print(ANDROID_LOG_INFO, "DescentGL",
-							"preserved swap: driver claims PRESERVED but the back buffer did not survive a swap; emulating it");
+		diag_log("preserved swap: driver claims PRESERVED but the back buffer did not survive a swap; emulating it");
 	}
-	__android_log_print(ANDROID_LOG_INFO, "DescentGL", "preserved swap: using %s",
-						Swap_preserved ? "the driver's PRESERVED behavior" : "emulation");
+	diag_log("preserved swap: using %s", Swap_preserved ? "the driver's PRESERVED behavior" : "emulation");
 	log_gl_diagnostics(display, surface);
 }
 

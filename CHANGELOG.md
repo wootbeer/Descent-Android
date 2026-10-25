@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8 (10-25-2026)]
+
+### Fixed
+- Bug report log (Descent-log.txt) was empty on some TVs; graphics info is now written by the game itself  
+
 ## [0.7 (10-23-2026)]
 
 ### Changed

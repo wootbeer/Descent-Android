@@ -696,7 +696,27 @@ GLuint ogles_save_screen() {
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glGetError();	// discard anything left over from earlier calls
 	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, grd_curscreen->sc_w, grd_curscreen->sc_h, 0);
+#ifdef ANDROID_NDK
+	{
+		// A saved-screen texture that comes out white is how menu backgrounds fail on some devices;
+		// log the first few copies (size asked for vs. the real framebuffer, and any GL error).
+		extern void diag_log(const char *fmt, ...);
+		extern void getRenderBufferSize(GLint *width, GLint *height);
+		static int logged_copies = 0;
+		GLenum err = glGetError();
+		if (logged_copies < 3 || err != GL_NO_ERROR) {
+			GLint fb_w = 0, fb_h = 0;
+			getRenderBufferSize(&fb_w, &fb_h);
+			if (logged_copies < 10) {
+				logged_copies++;
+				diag_log("saved screen: copied %dx%d, framebuffer %dx%d, GL error 0x%x",
+						 (int) grd_curscreen->sc_w, (int) grd_curscreen->sc_h, (int) fb_w, (int) fb_h, (unsigned) err);
+			}
+		}
+	}
+#endif
 	return tex;
 }
 

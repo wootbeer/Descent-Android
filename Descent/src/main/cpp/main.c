@@ -96,13 +96,14 @@ JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_descentMain(JNIEnv *env
 	Descent_view = descent_view;
 	(*env)->GetJavaVM(env, &jvm);
 
-	// Need to preserve the buffer for things to display corretly
-	setPreservedSwapBehavior();
-
-	// Get Android things for accessing files
+	// Get Android things for accessing files (before the swap setup below, which writes a
+	// diagnostics file into Document_path)
 	Asset_manager = AAssetManager_fromJava(env, asset_manager);
 	Document_path = (*env)->GetStringUTFChars(env, document_path, NULL);
 	Cache_path = (*env)->GetStringUTFChars(env, cache_path, NULL);
+
+	// Need to preserve the buffer for things to display corretly
+	setPreservedSwapBehavior();
 
 	// Start Descent with the magical hacked command line args! "-quickresume" is added the same
 	// way when this launch is the one immediately following a settings-triggered auto-restart

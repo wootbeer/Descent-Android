@@ -330,6 +330,21 @@ public class DescentActivity extends Activity implements SensorEventListener {
 					sb.append("Descent ").append(version).append(" | ").append(Build.MANUFACTURER).append(' ')
 							.append(Build.MODEL).append(" | Android ").append(Build.VERSION.RELEASE)
 							.append(" (API ").append(Build.VERSION.SDK_INT).append(")\n\n");
+					// What the game's native code itself wrote (graphics setup, texture errors) -- kept
+					// in a file because some devices hand an app nothing when it reads its own logcat.
+					sb.append("--- graphics diagnostics ---\n");
+					File nativeDiag = new File(getFilesDir(), "gl-diag.txt");
+					if (nativeDiag.isFile()) {
+						BufferedReader nativeReader = new BufferedReader(new InputStreamReader(new FileInputStream(nativeDiag)));
+						String nativeLine;
+						while ((nativeLine = nativeReader.readLine()) != null) {
+							sb.append(nativeLine).append('\n');
+						}
+						nativeReader.close();
+					} else {
+						sb.append("(none written yet)\n");
+					}
+					sb.append("\n--- logcat ---\n");
 					java.lang.Process proc = new ProcessBuilder("logcat", "-d", "-v", "time", "-s",
 							"DescentGL:V", "Descent:V", "DescentCrash:V", "DescentInput:V", "DescentMission:V")
 							.redirectErrorStream(true).start();

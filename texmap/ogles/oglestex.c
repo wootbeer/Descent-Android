@@ -19,7 +19,7 @@
 #include "rle.h"
 #include "oglestex.h"
 #ifdef ANDROID_NDK
-#include <android/log.h>
+extern void diag_log(const char *fmt, ...);	// render.c
 #endif
 
 extern ubyte gr_current_pal[256*3];
@@ -71,9 +71,8 @@ void ogles_bm_bind_teximage_2d(grs_bitmap *bm) {
 			GLenum err = glGetError();
 			if (err != GL_NO_ERROR && logged_failures < 10) {
 				logged_failures++;
-				__android_log_print(ANDROID_LOG_WARN, "DescentGL",
-									"glTexImage2D failed for %dx%d texture: error 0x%x",
-									(int) bm->bm_w, (int) bm->bm_h, (unsigned) err);
+				diag_log("glTexImage2D failed for %dx%d texture: error 0x%x",
+						 (int) bm->bm_w, (int) bm->bm_h, (unsigned) err);
 			}
 		}
 #endif
