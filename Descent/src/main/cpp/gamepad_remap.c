@@ -9,10 +9,12 @@
 // further down. The list no longer fits on one screen, so the screen itself
 // scrolls -- see the "Scrolling" section further down.
 //
-// D-pad, Start ("Menu") and Select ("Map") are intentionally never routed through
-// this system -- DescentView.handleGamepadKey() still dispatches them directly via
-// its original, fixed keyHandler() calls, so navigation and the ability to reach
-// this very screen always keep working regardless of what's been remapped. ("Map" and
+// Start ("Menu") and Select ("Map") are intentionally never routed through this system
+// -- DescentView.handleGamepadKey() still dispatches them directly via its original,
+// fixed keyHandler() calls, so the ability to reach this very screen always keeps working
+// regardless of what's been remapped. The D-pad directions can be bound here too (as
+// Android key codes 19..22), but only act as bound actions during gameplay: in any menu
+// -- this one included -- they always navigate. ("Map" and
 // "Automap" are the same game function, though -- see the comment on
 // Gamepad_remap_actions below -- so Select's fixed dispatch and the "Automap" row here
 // both ultimately press the same key.)
@@ -224,6 +226,48 @@ JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_gamepadKeyBound(JNI
 	return JNI_FALSE;
 }
 
+// True if keyCode is bound to an action. Unlike gamepadKeyBound() above this stays false
+// while the Remap Gamepad screen is merely open, so DescentView.java can use it to decide
+// whether a D-pad direction in gameplay should fire its bound action.
+JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_gamepadKeyAssigned(JNIEnv *env, jclass type, jint keyCode) {
+	int i;
+	for (i = 0; i < GP_NUM_ACTIONS; i++) {
+		if (Gamepad_bound_keycodes[i] == keyCode) {
+			return JNI_TRUE;
+		}
+	}
+	return JNI_FALSE;
+}
+
+// True while the Remap Gamepad screen is waiting for the player to press a button.
+JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_gamepadRemapCapturing(JNIEnv *env, jclass type) {
+	return Gamepad_remap_capturing ? JNI_TRUE : JNI_FALSE;
+}
+
+// Options menu "Stick Sensitivity" slider (0..8), defined in main/kconfig.c.
+extern ubyte Config_joystick_sensitivity;
+
+JNIEXPORT jint JNICALL Java_wootbeer_descent_DescentView_lookSensitivity(JNIEnv *env, jclass type) {
+	return (jint) Config_joystick_sensitivity;
+}
+
+// Analog stick turn/pitch: see Key_analog_scale in io/key.c. level is 1..64 (64 = full
+// speed), or 0 to clear.
+extern int Key_analog_scale[256];
+
+JNIEXPORT void JNICALL Java_wootbeer_descent_DescentView_setKeyAnalog(JNIEnv *env, jclass type, jint scancode, jint level) {
+	if (scancode < 0 || scancode > 255) {
+		return;
+	}
+	if (level < 0) {
+		level = 0;
+	}
+	if (level > 64) {
+		level = 64;
+	}
+	Key_analog_scale[scancode] = level * 1024;
+}
+
 JNIEXPORT jboolean JNICALL Java_wootbeer_descent_DescentView_isInRemapGamepadScreen(JNIEnv *env, jclass type) {
 	return (jboolean) Gamepad_remap_screen_active;
 }
@@ -265,6 +309,10 @@ static const char *gamepad_remap_bound_name(int keyCode) {
 		case GP_BUTTON_L1:     return "L1";
 		case GP_BUTTON_R1:     return "R1";
 		case GP_BUTTON_THUMBL: return "L3";
+		case 19:               return "D-Up";     // KEYCODE_DPAD_UP
+		case 20:               return "D-Down";   // KEYCODE_DPAD_DOWN
+		case 21:               return "D-Left";   // KEYCODE_DPAD_LEFT
+		case 22:               return "D-Right";  // KEYCODE_DPAD_RIGHT
 		case GP_TRIGGER_LT:    return "LT";
 		case GP_TRIGGER_RT:    return "RT";
 		case 98:               return "C";

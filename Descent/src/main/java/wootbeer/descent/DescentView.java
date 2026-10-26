@@ -84,6 +84,12 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	// edge-detection state from the gameplay fields above so the two dispatch sites
 	// never stomp on each other's "was this held last frame" tracking.
 	private boolean hatLeftDown, hatRightDown, hatUpDown, hatDownDown;
+	// Which D-pad directions (bit per dpadIndex()) were routed to a Remap Gamepad binding on
+	// press instead of the usual menu-nav/turn key, one mask per source (discrete key
+	// events vs. the hat axis) so each release goes back the same way its press went.
+	private int dpadKeyRawMask, dpadHatRawMask;
+	// Last analog level (0..64) sent to native for each turn/pitch scancode; 0 = none sent.
+	private final int[] lookLevelSent = new int[256];
 	private boolean menuNavLeftDown, menuNavRightDown, menuNavUpDown, menuNavDownDown;
 	private boolean menuNavRsLeftDown, menuNavRsRightDown, menuNavRsUpDown, menuNavRsDownDown;
 	// Digital press/release synthesized from the LT/RT analog trigger axes crossing
@@ -91,6 +97,11 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	// discrete button events via gamepadButtonRaw()) can also see a trigger "press" --
 	// see GP_TRIGGER_LT/RT in gamepad_remap.c for why this needs synthesizing at all.
 	private boolean triggerLtRemapDown, triggerRtRemapDown;
+
+	// Turn/pitch from a stick is analog: it starts once the stick passes LOOK_DEADZONE and
+	// reaches full speed at LOOK_FULL, scaled by the Stick Sensitivity slider (0..8).
+	private static final float LOOK_DEADZONE = 0.15f;
+	private static final float LOOK_FULL = 0.85f;
 
 	// Mirrors GP_TRIGGER_LT/GP_TRIGGER_RT in gamepad_remap.c -- keep these two in sync.
 	private static final int GP_TRIGGER_LT = 1001;
@@ -266,10 +277,10 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			// the key events for this device's D-pad may simply never arrive. Routed
 			// straight to keyHandler() via the same dpadScancode() the KEYCODE_DPAD_*
 			// case uses, so both paths agree on menu-nav-vs-Modern-gameplay-backup.
-			hatLeftDown = updateDigitalAxis(hatLeftDown, hatX < -STICK_DEADZONE, dpadScancode(KeyEvent.KEYCODE_DPAD_LEFT));
-			hatRightDown = updateDigitalAxis(hatRightDown, hatX > STICK_DEADZONE, dpadScancode(KeyEvent.KEYCODE_DPAD_RIGHT));
-			hatUpDown = updateDigitalAxis(hatUpDown, hatY < -STICK_DEADZONE, dpadScancode(KeyEvent.KEYCODE_DPAD_UP));
-			hatDownDown = updateDigitalAxis(hatDownDown, hatY > STICK_DEADZONE, dpadScancode(KeyEvent.KEYCODE_DPAD_DOWN));
+			hatLeftDown = updateDpadHat(hatLeftDown, hatX < -STICK_DEADZONE, KeyEvent.KEYCODE_DPAD_LEFT);
+			hatRightDown = updateDpadHat(hatRightDown, hatX > STICK_DEADZONE, KeyEvent.KEYCODE_DPAD_RIGHT);
+			hatUpDown = updateDpadHat(hatUpDown, hatY < -STICK_DEADZONE, KeyEvent.KEYCODE_DPAD_UP);
+			hatDownDown = updateDpadHat(hatDownDown, hatY > STICK_DEADZONE, KeyEvent.KEYCODE_DPAD_DOWN);
 
 			// Both sticks always navigate any menu -- the standalone main/options/pause
 			// menus AND the in-game Options overlay opened mid-level (which never leaves
@@ -329,14 +340,15 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			// event happens to change the raw axis again.
 			if (!modern) {
 				// Standard: left stick turns/pitches, right stick slides, triggers thrust.
-				turnLeftDown = updateDigitalAxis(turnLeftDown, !menuOpen && lx < -STICK_DEADZONE, (char) 0xCB);  // KEY_LEFT
-				turnRightDown = updateDigitalAxis(turnRightDown, !menuOpen && lx > STICK_DEADZONE, (char) 0xCD); // KEY_RIGHT
+				float sens = lookSensitivityFactor();
+				turnLeftDown = updateLookAxis(turnLeftDown, -lx, sens, !menuOpen, (char) 0xCB);  // KEY_LEFT
+				turnRightDown = updateLookAxis(turnRightDown, lx, sens, !menuOpen, (char) 0xCD); // KEY_RIGHT
 				if (invertY) {
-					pitchUpDown = updateDigitalAxis(pitchUpDown, !menuOpen && ly < -STICK_DEADZONE, (char) 0xC8);    // KEY_UP
-					pitchDownDown = updateDigitalAxis(pitchDownDown, !menuOpen && ly > STICK_DEADZONE, (char) 0xD0); // KEY_DOWN
+					pitchUpDown = updateLookAxis(pitchUpDown, -ly, sens, !menuOpen, (char) 0xC8);    // KEY_UP
+					pitchDownDown = updateLookAxis(pitchDownDown, ly, sens, !menuOpen, (char) 0xD0); // KEY_DOWN
 				} else {
-					pitchUpDown = updateDigitalAxis(pitchUpDown, !menuOpen && ly > STICK_DEADZONE, (char) 0xC8);     // KEY_UP
-					pitchDownDown = updateDigitalAxis(pitchDownDown, !menuOpen && ly < -STICK_DEADZONE, (char) 0xD0); // KEY_DOWN
+					pitchUpDown = updateLookAxis(pitchUpDown, ly, sens, !menuOpen, (char) 0xC8);     // KEY_UP
+					pitchDownDown = updateLookAxis(pitchDownDown, -ly, sens, !menuOpen, (char) 0xD0); // KEY_DOWN
 				}
 
 				slideLeftDown = updateDigitalAxis(slideLeftDown, !menuOpen && rx < -STICK_DEADZONE, (char) 0x4F);  // KEY_PAD1
@@ -363,14 +375,15 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 				// Note: vertical strafe (slide up/down) has no stick or trigger driving it
 				// in this layout -- both stick Y axes and both triggers are already spoken
 				// for above.
-				turnLeftDown = updateDigitalAxis(turnLeftDown, !menuOpen && rx < -STICK_DEADZONE, (char) 0xCB);  // KEY_LEFT
-				turnRightDown = updateDigitalAxis(turnRightDown, !menuOpen && rx > STICK_DEADZONE, (char) 0xCD); // KEY_RIGHT
+				float sens = lookSensitivityFactor();
+				turnLeftDown = updateLookAxis(turnLeftDown, -rx, sens, !menuOpen, (char) 0xCB);  // KEY_LEFT
+				turnRightDown = updateLookAxis(turnRightDown, rx, sens, !menuOpen, (char) 0xCD); // KEY_RIGHT
 				if (invertY) {
-					pitchUpDown = updateDigitalAxis(pitchUpDown, !menuOpen && ry < -STICK_DEADZONE, (char) 0xC8);    // KEY_UP
-					pitchDownDown = updateDigitalAxis(pitchDownDown, !menuOpen && ry > STICK_DEADZONE, (char) 0xD0); // KEY_DOWN
+					pitchUpDown = updateLookAxis(pitchUpDown, -ry, sens, !menuOpen, (char) 0xC8);    // KEY_UP
+					pitchDownDown = updateLookAxis(pitchDownDown, ry, sens, !menuOpen, (char) 0xD0); // KEY_DOWN
 				} else {
-					pitchUpDown = updateDigitalAxis(pitchUpDown, !menuOpen && ry > STICK_DEADZONE, (char) 0xC8);     // KEY_UP
-					pitchDownDown = updateDigitalAxis(pitchDownDown, !menuOpen && ry < -STICK_DEADZONE, (char) 0xD0); // KEY_DOWN
+					pitchUpDown = updateLookAxis(pitchUpDown, ry, sens, !menuOpen, (char) 0xC8);     // KEY_UP
+					pitchDownDown = updateLookAxis(pitchDownDown, -ry, sens, !menuOpen, (char) 0xD0); // KEY_DOWN
 				}
 
 				slideLeftDown = updateDigitalAxis(slideLeftDown, !menuOpen && lx < -STICK_DEADZONE, (char) 0x4F);  // KEY_PAD1
@@ -403,6 +416,94 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	private boolean updateDigitalAxisRaw(boolean wasDown, boolean isDown, int keyCode) {
 		if (isDown != wasDown) {
 			gamepadButtonRaw(keyCode, isDown);
+		}
+		return isDown;
+	}
+
+	// Stick Sensitivity slider (0..8) as a speed multiplier for the sticks' turn/pitch:
+	// 8 (the max, and the default for new pilots) is the old full speed, 0 is a fifth of it.
+	private float lookSensitivityFactor() {
+		int s = lookSensitivity();
+		if (s < 0) s = 0;
+		if (s > 8) s = 8;
+		return 0.2f + 0.8f * s / 8f;
+	}
+
+	// Same edge-detection idiom as updateDigitalAxis(), for a turn/pitch direction driven by
+	// a stick: v is the stick's deflection toward this direction (0 or negative = the
+	// other way). Past LOOK_DEADZONE the key is held down just as before, but native is
+	// also told how hard the stick is pushed (times the sensitivity setting) so the turn
+	// rate follows the deflection instead of always being full speed -- see
+	// Key_analog_scale in io/key.c.
+	private boolean updateLookAxis(boolean wasDown, float v, float sensFactor, boolean allowed, char key) {
+		boolean isDown = allowed && v > LOOK_DEADZONE;
+		if (isDown) {
+			float mag = (v - LOOK_DEADZONE) / (LOOK_FULL - LOOK_DEADZONE);
+			if (mag > 1f) mag = 1f;
+			int level = (int) (mag * sensFactor * 64f + 0.5f);
+			if (level < 1) level = 1;
+			if (level != lookLevelSent[key]) {
+				lookLevelSent[key] = level;
+				setKeyAnalog(key, level);
+			}
+		}
+		if (isDown != wasDown) {
+			keyHandler(key, isDown);
+			if (!isDown) {
+				lookLevelSent[key] = 0;
+				if (!allowed) {
+					// Let go because a menu opened: nothing left to scale.
+					setKeyAnalog(key, 0);
+				}
+			}
+		}
+		return isDown;
+	}
+
+	private static int dpadIndex(int keyCode) {
+		switch (keyCode) {
+			case KeyEvent.KEYCODE_DPAD_UP:    return 0;
+			case KeyEvent.KEYCODE_DPAD_DOWN:  return 1;
+			case KeyEvent.KEYCODE_DPAD_LEFT:  return 2;
+			default:                          return 3;
+		}
+	}
+
+	// One D-pad direction going down or up, from either a discrete KEYCODE_DPAD_* event
+	// (fromHat false) or the hat axis (fromHat true). While a menu is open it always means
+	// menu navigation; in actual gameplay a direction that has been bound to an action in
+	// Remap Gamepad triggers that action instead, otherwise it keeps doing what it always
+	// did (dpadScancode()). While the Remap Gamepad screen is waiting for a button, every
+	// direction is passed through so it can be captured. A release always goes the same
+	// way its press went, even if a menu opened in between.
+	private void dpadEvent(int keyCode, boolean down, boolean fromHat) {
+		int bit = 1 << dpadIndex(keyCode);
+		int mask = fromHat ? dpadHatRawMask : dpadKeyRawMask;
+		if (down) {
+			boolean raw = gamepadRemapCapturing()
+					|| (isInGame() && !isMenuOpen() && gamepadKeyAssigned(keyCode));
+			if (raw) {
+				mask |= bit;
+				gamepadButtonRaw(keyCode, true);
+			} else {
+				keyHandler(dpadScancode(keyCode), true);
+			}
+		} else if ((mask & bit) != 0) {
+			mask &= ~bit;
+			gamepadButtonRaw(keyCode, false);
+		} else {
+			keyHandler(dpadScancode(keyCode), false);
+		}
+		if (fromHat) {
+			dpadHatRawMask = mask;
+		} else {
+			dpadKeyRawMask = mask;
+		}
+	}
+
+	private boolean updateDpadHat(boolean wasDown, boolean isDown, int keyCode) {
+		if (isDown != wasDown) {
+			dpadEvent(keyCode, isDown, true);
 		}
 		return isDown;
 	}
@@ -518,11 +619,12 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			case KeyEvent.KEYCODE_DPAD_RIGHT:
 				// Whenever a menu is open, D-pad always means menu navigation
 				// (KEY_UP/DOWN/LEFT/RIGHT) regardless of Stick Layout, so it can always
-				// reach and drive every menu. In actual gameplay it backs up whatever the
-				// left stick currently does under the active layout: turn/pitch in
+				// reach and drive every menu. In actual gameplay a direction bound to an
+				// action in Remap Gamepad does that action; otherwise it backs up whatever
+				// the left stick currently does under the active layout: turn/pitch in
 				// Standard (unchanged, same keys either way), strafe/thrust in Modern.
-				key = dpadScancode(keyCode);
-				break;
+				dpadEvent(keyCode, down, false);
+				return true;
 			default:
 				// Any other gamepad button -- e.g. a handheld's programmable M1/M2 back buttons
 				// -- is usable if the player bound it in Remap Gamepad (or the remap screen is
@@ -786,6 +888,19 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 			keyHandler((char) 0xD0, false);
 			keyHandler((char) 0x2C, false);
 		}
+
+		// Directions that were pressed as a bound action rather than a key.
+		int[] dpadCodes = { KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+				KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT };
+		for (int code : dpadCodes) {
+			int bit = 1 << dpadIndex(code);
+			if (((dpadKeyRawMask | dpadHatRawMask) & bit) != 0) {
+				gamepadButtonRaw(code, false);
+			}
+		}
+		dpadKeyRawMask = 0;
+		dpadHatRawMask = 0;
+		java.util.Arrays.fill(lookLevelSent, 0);
 
 		triggerLtRemapDown = updateDigitalAxisRaw(triggerLtRemapDown, false, GP_TRIGGER_LT);
 		triggerRtRemapDown = updateDigitalAxisRaw(triggerRtRemapDown, false, GP_TRIGGER_RT);
@@ -1180,6 +1295,16 @@ public class DescentView extends SurfaceView implements KeyEvent.Callback, Surfa
 	// True if this key code is bound to an action in Remap Gamepad, or the remap screen is open.
 	private static native boolean gamepadKeyBound(int keyCode);
 	private static native boolean gamepadActionBound(int action);
+	// True if this key code is bound to an action in Remap Gamepad (unlike gamepadKeyBound(),
+	// not true just because the remap screen is open).
+	private static native boolean gamepadKeyAssigned(int keyCode);
+	// True while the Remap Gamepad screen is waiting for the player to press a button.
+	private static native boolean gamepadRemapCapturing();
+	// The Stick Sensitivity slider value (0..8).
+	private static native int lookSensitivity();
+	// Tells native how far a stick is pushed while it holds a turn/pitch key: level 1..64 is
+	// the fraction (level/64) of full speed to turn at; 0 clears it (full speed again).
+	private static native void setKeyAnalog(int scancode, int level);
 	// Indices into Gamepad_remap_actions[] in gamepad_remap.c -- keep in sync.
 	private static final int GP_ACTION_ACCELERATE = 20;
 	private static final int GP_ACTION_REVERSE = 21;

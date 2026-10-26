@@ -2391,7 +2391,12 @@ void clear_boxed_message()
 
 	if (bg.bmp) {
 
+#ifndef OGLES
 		gr_bitmap(bg.x-15, bg.y-15, bg.bmp);
+#endif
+		// With OpenGL the saved copy is never filled in (gr_bm_ubitblt can't read the GL screen), so
+		// drawing it back painted uninitialized memory as a garbled, offset box over the real one.
+		// The next frame repaints the whole screen anyway.
 
 		gr_free_bitmap(bg.bmp);
 

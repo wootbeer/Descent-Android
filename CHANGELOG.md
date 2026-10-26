@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10 (10-26-2026)]
+
+### Added
+- D-pad directions can be bound to actions in Remap Gamepad (menus still use them to navigate)  
+
+### Fixed
+- Garbled offset box over the loading message when starting a level  
+
+### Changed
+- Analog sticks now turn and pitch in proportion to how far they are pushed, and the Stick Sensitivity slider now affects them  
+
 ## [0.9 (10-25-2026)]
 
 ### Fixed

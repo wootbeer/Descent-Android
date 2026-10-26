@@ -705,7 +705,7 @@ extern void delay(unsigned long time);	// main/kconfig.c -- ~100Hz usleep thrott
 
 // Shown right before the app closes for a settings-triggered restart (see
 // do_detail_level_menu_custom() below). This used to wait for a tap or the gamepad confirm
-// button, but this device's always-on analog-stick menu navigation continuously feeds synthetic
+// button, but this device's- always-on analog-stick menu navigation continuously feeds synthetic
 // key/confirm-adjacent input from any stick drift, which made a reliable "wait for a genuine
 // press" dismiss check more trouble than it was worth. A flat timer sidesteps that whole class
 // of problem: the message is simply on screen for a couple of seconds, then the app closes on
@@ -1109,7 +1109,7 @@ void do_options_menu()
 		m[1].type = NM_TYPE_SLIDER; m[1].text=TXT_MUSIC_VOLUME; m[1].value=Config_midi_volume;m[1].min_value=0; m[1].max_value=8;
 		m[2].type = NM_TYPE_TEXT; m[2].text="";
 		m[3].type = NM_TYPE_MENU; m[3].text="Remap Gamepad";
-		m[4].type = NM_TYPE_SLIDER; m[4].text="Look Sensitivity"; m[4].value=Config_joystick_sensitivity; m[4].min_value =0; m[4].max_value = 8;
+		m[4].type = NM_TYPE_SLIDER; m[4].text="Stick Sensitivity"; m[4].value=Config_joystick_sensitivity; m[4].min_value =0; m[4].max_value = 8;
 		m[5].type = NM_TYPE_SLIDER; m[5].text="Touch Scaling"; m[5].value=Config_touch_control_scale; m[5].min_value=0; m[5].max_value=8;
 		m[6].type = NM_TYPE_CHECK; m[6].text="Invert Y"; m[6].value=Config_invert_y;
 		m[7].type = NM_TYPE_TEXT; m[7].text="";

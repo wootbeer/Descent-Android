@@ -388,6 +388,15 @@ unsigned int key_get_shift_status()
 	return shift_status;
 }
 
+// Android: how fast an analog stick wants a key-driven turn/pitch to go. The stick is
+// turned into a held key (so the whole turn/pitch path in kconfig.c stays untouched), and
+// this scales the time that key counts as held by how far the stick is pushed times the
+// Stick Sensitivity setting. 0 means "no scaling" (a real key, the D-pad, full speed);
+// otherwise it is a 16.16 fraction of full speed. Set from DescentView.java through
+// setKeyAnalog() in gamepad_remap.c; cleared again here the first time the key is
+// polled after being released, so it never leaks onto the next ordinary key press.
+int Key_analog_scale[256];
+
 // Returns the number of seconds this key has been down since last call.
 fix key_down_time(int scancode)	{
 	fix time_down, time;
@@ -406,6 +415,12 @@ fix key_down_time(int scancode)	{
 		time = timer_get_fixed_secondsX();
 		time_down =  time - key_data.TimeKeyWentDown[scancode];
 		key_data.TimeKeyWentDown[scancode] = time;
+	}
+
+	if ( Key_analog_scale[scancode] )	{
+		time_down = (fix)(((long long)time_down * Key_analog_scale[scancode]) >> 16);
+		if ( !keyd_pressed[scancode] )
+			Key_analog_scale[scancode] = 0;
 	}
 
 	return time_down;
